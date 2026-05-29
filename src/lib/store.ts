@@ -1,0 +1,258 @@
+import { supabase } from './supabase';
+import type { Context, Task } from '../types';
+
+// ── Persisted state shape ────────────────────────────────────
+interface State {
+  tasks: Task[];
+  contexts: Context[];
+  loaded: boolean;
+  online: boolean;
+  syncing: boolean;
+  pending: number;
+}
+
+type Op =
+  | { kind: 'task.insert'; row: Task }
+  | { kind: 'task.update'; id: string; patch: Partial<Task> }
+  | { kind: 'task.delete'; id: string }
+  | { kind: 'context.insert'; row: Context }
+  | { kind: 'context.update'; id: string; patch: Partial<Context> }
+  | { kind: 'context.delete'; id: string };
+
+const DEFAULT_CONTEXTS = ['IOM', 'Work', 'Home', 'Personal'];
+
+const KEY = {
+  tasks: 'stash.tasks',
+  contexts: 'stash.contexts',
+  queue: 'stash.queue',
+};
+
+// ── In-memory state + subscribers ────────────────────────────
+let state: State = {
+  tasks: load<Task[]>(KEY.tasks, []),
+  contexts: load<Context[]>(KEY.contexts, []),
+  loaded: false,
+  online: navigator.onLine,
+  syncing: false,
+  pending: load<Op[]>(KEY.queue, []).length,
+};
+
+const listeners = new Set<() => void>();
+
+export function subscribe(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+export function getSnapshot(): State {
+  return state;
+}
+
+function set(patch: Partial<State>): void {
+  state = { ...state, ...patch };
+  listeners.forEach((fn) => fn());
+}
+
+function load<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function save(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* storage full / unavailable — non-fatal */
+  }
+}
+
+function setTasks(tasks: Task[]): void {
+  save(KEY.tasks, tasks);
+  set({ tasks });
+}
+
+function setContexts(contexts: Context[]): void {
+  save(KEY.contexts, contexts);
+  set({ contexts });
+}
+
+// ── Write queue ──────────────────────────────────────────────
+function readQueue(): Op[] {
+  return load<Op[]>(KEY.queue, []);
+}
+
+function writeQueue(queue: Op[]): void {
+  save(KEY.queue, queue);
+  set({ pending: queue.length });
+}
+
+function enqueue(op: Op): void {
+  writeQueue([...readQueue(), op]);
+  void flush();
+}
+
+async function applyOp(op: Op): Promise<void> {
+  switch (op.kind) {
+    case 'task.insert': {
+      const { error } = await supabase.from('tasks').insert(op.row);
+      if (error) throw error;
+      break;
+    }
+    case 'task.update': {
+      const { error } = await supabase.from('tasks').update(op.patch).eq('id', op.id);
+      if (error) throw error;
+      break;
+    }
+    case 'task.delete': {
+      const { error } = await supabase.from('tasks').delete().eq('id', op.id);
+      if (error) throw error;
+      break;
+    }
+    case 'context.insert': {
+      const { error } = await supabase.from('contexts').insert(op.row);
+      if (error) throw error;
+      break;
+    }
+    case 'context.update': {
+      const { error } = await supabase.from('contexts').update(op.patch).eq('id', op.id);
+      if (error) throw error;
+      break;
+    }
+    case 'context.delete': {
+      const { error } = await supabase.from('contexts').delete().eq('id', op.id);
+      if (error) throw error;
+      break;
+    }
+  }
+}
+
+let flushing = false;
+
+export async function flush(): Promise<void> {
+  if (flushing || !navigator.onLine) return;
+  let queue = readQueue();
+  if (queue.length === 0) return;
+
+  flushing = true;
+  set({ syncing: true });
+  try {
+    while (queue.length > 0) {
+      await applyOp(queue[0]);
+      queue = queue.slice(1);
+      writeQueue(queue);
+    }
+  } catch {
+    // Stop on first failure; remaining ops stay queued for the next attempt.
+  } finally {
+    flushing = false;
+    set({ syncing: false });
+  }
+}
+
+// ── Server fetch + reconcile ─────────────────────────────────
+async function fetchAll(): Promise<void> {
+  if (!navigator.onLine) return;
+  const [tasksRes, ctxRes] = await Promise.all([
+    supabase.from('tasks').select('*').order('created_at', { ascending: false }),
+    supabase.from('contexts').select('*').order('created_at', { ascending: true }),
+  ]);
+  if (!tasksRes.error && tasksRes.data) setTasks(tasksRes.data as Task[]);
+  if (!ctxRes.error && ctxRes.data) setContexts(ctxRes.data as Context[]);
+}
+
+async function seedDefaultsIfEmpty(): Promise<void> {
+  if (state.contexts.length > 0 || readQueue().length > 0) return;
+  const now = new Date().toISOString();
+  const rows: Context[] = DEFAULT_CONTEXTS.map((name) => ({
+    id: crypto.randomUUID(),
+    name,
+    created_at: now,
+  }));
+  setContexts(rows);
+  rows.forEach((row) => enqueue({ kind: 'context.insert', row }));
+}
+
+export async function init(): Promise<void> {
+  set({ online: navigator.onLine });
+  await flush();
+  await fetchAll();
+  await seedDefaultsIfEmpty();
+  set({ loaded: true });
+
+  window.addEventListener('online', () => {
+    set({ online: true });
+    void flush().then(fetchAll);
+  });
+  window.addEventListener('offline', () => set({ online: false }));
+
+  // Safety net: retry queued writes periodically while anything is pending.
+  setInterval(() => {
+    if (readQueue().length > 0) void flush();
+  }, 15000);
+}
+
+export function reset(): void {
+  localStorage.removeItem(KEY.tasks);
+  localStorage.removeItem(KEY.contexts);
+  localStorage.removeItem(KEY.queue);
+  state = { tasks: [], contexts: [], loaded: false, online: navigator.onLine, syncing: false, pending: 0 };
+  listeners.forEach((fn) => fn());
+}
+
+// ── Public mutations (optimistic) ────────────────────────────
+export function createTask(title: string, contexts: string[], note?: string): void {
+  const row: Task = {
+    id: crypto.randomUUID(),
+    title: title.trim(),
+    note: note?.trim() || null,
+    contexts,
+    completed: false,
+    created_at: new Date().toISOString(),
+    completed_at: null,
+  };
+  setTasks([row, ...state.tasks]);
+  enqueue({ kind: 'task.insert', row });
+}
+
+export function updateTask(id: string, patch: Partial<Pick<Task, 'title' | 'note' | 'contexts'>>): void {
+  setTasks(state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  enqueue({ kind: 'task.update', id, patch });
+}
+
+export function toggleComplete(id: string): void {
+  const task = state.tasks.find((t) => t.id === id);
+  if (!task) return;
+  const completed = !task.completed;
+  const completed_at = completed ? new Date().toISOString() : null;
+  setTasks(state.tasks.map((t) => (t.id === id ? { ...t, completed, completed_at } : t)));
+  enqueue({ kind: 'task.update', id, patch: { completed, completed_at } });
+}
+
+export function deleteTask(id: string): void {
+  setTasks(state.tasks.filter((t) => t.id !== id));
+  enqueue({ kind: 'task.delete', id });
+}
+
+export function createContext(name: string): void {
+  const row: Context = { id: crypto.randomUUID(), name: name.trim(), created_at: new Date().toISOString() };
+  setContexts([...state.contexts, row]);
+  enqueue({ kind: 'context.insert', row });
+}
+
+export function renameContext(id: string, name: string): void {
+  setContexts(state.contexts.map((c) => (c.id === id ? { ...c, name: name.trim() } : c)));
+  enqueue({ kind: 'context.update', id, patch: { name: name.trim() } });
+}
+
+export function deleteContext(id: string): void {
+  // Strip the context from any tasks that reference it.
+  state.tasks
+    .filter((t) => t.contexts.includes(id))
+    .forEach((t) => updateTask(t.id, { contexts: t.contexts.filter((c) => c !== id) }));
+  setContexts(state.contexts.filter((c) => c.id !== id));
+  enqueue({ kind: 'context.delete', id });
+}

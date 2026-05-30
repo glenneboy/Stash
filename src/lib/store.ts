@@ -307,7 +307,7 @@ export function reset(): void {
 }
 
 // ── Public mutations (optimistic) ────────────────────────────
-export function createTask(title: string, contexts: string[], note?: string): void {
+export function createTask(title: string, contexts: string[], note?: string): string {
   const row: Task = {
     id: crypto.randomUUID(),
     title: title.trim(),
@@ -319,6 +319,13 @@ export function createTask(title: string, contexts: string[], note?: string): vo
   };
   setTasks([row, ...state.tasks]);
   enqueue({ kind: 'task.insert', row });
+  return row.id;
+}
+
+// Quick-capture entry point (deeplink): create a task and confirm with an undo toast.
+export function quickAddTask(title: string, contexts: string[]): void {
+  const id = createTask(title, contexts);
+  showToast('Added', () => deleteTask(id));
 }
 
 export function updateTask(id: string, patch: Partial<Pick<Task, 'title' | 'note' | 'contexts'>>): void {

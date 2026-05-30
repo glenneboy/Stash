@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Context } from '../types';
 import { createTask } from '../lib/store';
+import { parseTags } from '../lib/tags';
 
 interface Props {
   contexts: Context[];
@@ -10,22 +11,6 @@ interface Props {
   initialTitle?: string;
   /** Full shared detail, prefilled into the note (revealed when present). */
   initialNote?: string;
-}
-
-/**
- * Pull `#context` tokens out of the title. Tokens matching an existing context
- * (case-insensitive) become tag ids and are stripped; unmatched ones stay literal.
- */
-function parseTags(title: string, contexts: Context[]): { title: string; tagIds: string[] } {
-  const byName = new Map(contexts.map((c) => [c.name.toLowerCase(), c.id]));
-  const tagIds: string[] = [];
-  const cleaned = title.replace(/#([\p{L}\p{N}_-]+)/gu, (full, word: string) => {
-    const id = byName.get(word.toLowerCase());
-    if (!id) return full;
-    if (!tagIds.includes(id)) tagIds.push(id);
-    return '';
-  });
-  return { title: cleaned.replace(/\s{2,}/g, ' ').trim(), tagIds };
 }
 
 export function CaptureBar({ contexts, activeContextId, initialTitle = '', initialNote = '' }: Props) {

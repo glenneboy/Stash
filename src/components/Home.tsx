@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Filter, Task } from '../types';
 import { ALL_FILTER } from '../types';
 import { useStore } from '../lib/useStore';
+import { quickAddTask } from '../lib/store';
+import { parseTags } from '../lib/tags';
 import { supabase } from '../lib/supabase';
 import { CaptureBar } from './CaptureBar';
 import { FilterBar } from './FilterBar';
@@ -38,6 +40,19 @@ export function Home() {
   const [editing, setEditing] = useState<Task | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const shared = useMemo(readShared, []);
+
+  // Quick-capture deeplink: `?add=<text>` creates a task headlessly once the store has
+  // loaded (so inline `#tags` can resolve against existing contexts). Fires once per load.
+  const addHandled = useRef(false);
+  useEffect(() => {
+    if (addHandled.current || !loaded) return;
+    const text = new URLSearchParams(window.location.search).get('add');
+    addHandled.current = true;
+    if (text === null) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    const { title, tagIds } = parseTags(text, contexts);
+    if (title) quickAddTask(title, tagIds);
+  }, [loaded, contexts]);
 
   const visible = useMemo(() => tasks.filter((t) => matchesFilter(t, filter)), [tasks, filter]);
   const active = visible.filter((t) => !t.completed);

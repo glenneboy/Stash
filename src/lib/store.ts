@@ -2,6 +2,12 @@ import { supabase } from './supabase';
 import type { Context, Task } from '../types';
 
 // ── Persisted state shape ────────────────────────────────────
+interface Toast {
+  id: string;
+  message: string;
+  undo: () => void;
+}
+
 interface State {
   tasks: Task[];
   contexts: Context[];
@@ -9,6 +15,7 @@ interface State {
   online: boolean;
   syncing: boolean;
   pending: number;
+  toast: Toast | null;
 }
 
 type Op =
@@ -35,6 +42,7 @@ let state: State = {
   online: navigator.onLine,
   syncing: false,
   pending: load<Op[]>(KEY.queue, []).length,
+  toast: null,
 };
 
 const listeners = new Set<() => void>();
@@ -73,6 +81,27 @@ function save(key: string, value: unknown): void {
 function setTasks(tasks: Task[]): void {
   save(KEY.tasks, tasks);
   set({ tasks });
+}
+
+// ── Undo toast ───────────────────────────────────────────────
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+function showToast(message: string, undo: () => void): void {
+  if (toastTimer) clearTimeout(toastTimer);
+  set({ toast: { id: crypto.randomUUID(), message, undo } });
+  toastTimer = setTimeout(() => set({ toast: null }), 5000);
+}
+
+export function dismissToast(): void {
+  if (toastTimer) clearTimeout(toastTimer);
+  set({ toast: null });
+}
+
+export function runUndo(): void {
+  const toast = state.toast;
+  if (!toast) return;
+  dismissToast();
+  toast.undo();
 }
 
 function setContexts(contexts: Context[]): void {
@@ -199,7 +228,7 @@ export function reset(): void {
   localStorage.removeItem(KEY.tasks);
   localStorage.removeItem(KEY.contexts);
   localStorage.removeItem(KEY.queue);
-  state = { tasks: [], contexts: [], loaded: false, online: navigator.onLine, syncing: false, pending: 0 };
+  state = { tasks: [], contexts: [], loaded: false, online: navigator.onLine, syncing: false, pending: 0, toast: null };
   listeners.forEach((fn) => fn());
 }
 
@@ -230,11 +259,20 @@ export function toggleComplete(id: string): void {
   const completed_at = completed ? new Date().toISOString() : null;
   setTasks(state.tasks.map((t) => (t.id === id ? { ...t, completed, completed_at } : t)));
   enqueue({ kind: 'task.update', id, patch: { completed, completed_at } });
+  if (completed) showToast('Completed', () => toggleComplete(id));
 }
 
 export function deleteTask(id: string): void {
+  const task = state.tasks.find((t) => t.id === id);
   setTasks(state.tasks.filter((t) => t.id !== id));
   enqueue({ kind: 'task.delete', id });
+  if (task) showToast('Deleted', () => restoreTask(task));
+}
+
+function restoreTask(task: Task): void {
+  const tasks = [...state.tasks, task].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  setTasks(tasks);
+  enqueue({ kind: 'task.insert', row: task });
 }
 
 export function createContext(name: string): void {

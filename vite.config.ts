@@ -18,6 +18,11 @@ export default defineConfig({
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/Stash/',
+        share_target: {
+          action: '/Stash/',
+          method: 'GET',
+          params: { title: 'title', text: 'text', url: 'url' },
+        },
         icons: [
           { src: 'pwa-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'pwa-512.png', sizes: '512x512', type: 'image/png' },

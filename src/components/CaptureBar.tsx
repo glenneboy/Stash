@@ -6,10 +6,28 @@ interface Props {
   contexts: Context[];
   /** When a filter context is active, pre-tag new tasks with it. */
   activeContextId: string | null;
+  /** Text shared into the app via the PWA share target, used to prefill the input. */
+  initialTitle?: string;
 }
 
-export function CaptureBar({ contexts, activeContextId }: Props) {
-  const [title, setTitle] = useState('');
+/**
+ * Pull `#context` tokens out of the title. Tokens matching an existing context
+ * (case-insensitive) become tag ids and are stripped; unmatched ones stay literal.
+ */
+function parseTags(title: string, contexts: Context[]): { title: string; tagIds: string[] } {
+  const byName = new Map(contexts.map((c) => [c.name.toLowerCase(), c.id]));
+  const tagIds: string[] = [];
+  const cleaned = title.replace(/#([\p{L}\p{N}_-]+)/gu, (full, word: string) => {
+    const id = byName.get(word.toLowerCase());
+    if (!id) return full;
+    if (!tagIds.includes(id)) tagIds.push(id);
+    return '';
+  });
+  return { title: cleaned.replace(/\s{2,}/g, ' ').trim(), tagIds };
+}
+
+export function CaptureBar({ contexts, activeContextId, initialTitle = '' }: Props) {
+  const [title, setTitle] = useState(initialTitle);
   const [tags, setTags] = useState<string[]>(activeContextId ? [activeContextId] : []);
   const [showTags, setShowTags] = useState(false);
 
@@ -19,9 +37,10 @@ export function CaptureBar({ contexts, activeContextId }: Props) {
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    const value = title.trim();
-    if (!value) return;
-    createTask(value, tags);
+    const { title: parsedTitle, tagIds } = parseTags(title, contexts);
+    if (!parsedTitle) return;
+    const merged = [...new Set([...tags, ...tagIds])];
+    createTask(parsedTitle, merged);
     setTitle('');
     setTags(activeContextId ? [activeContextId] : []);
     setShowTags(false);

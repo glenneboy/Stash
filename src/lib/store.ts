@@ -1,3 +1,4 @@
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import type { Context, Task } from '../types';
 
@@ -193,6 +194,77 @@ async function fetchAll(): Promise<void> {
   if (!ctxRes.error && ctxRes.data) setContexts(ctxRes.data as Context[]);
 }
 
+// ── Realtime sync ────────────────────────────────────────────
+let channel: RealtimeChannel | null = null;
+
+// A remote event for a row we still have unsynced locally must be ignored,
+// so an incoming change never clobbers a pending optimistic edit.
+function hasPendingForRow(id: string): boolean {
+  return readQueue().some((op) => ('row' in op ? op.row.id : op.id) === id);
+}
+
+function applyRemoteTask(event: string, next: Task | null, prevId: string | undefined): void {
+  const id = next?.id ?? prevId;
+  if (!id || hasPendingForRow(id)) return;
+  if (event === 'DELETE') {
+    setTasks(state.tasks.filter((t) => t.id !== id));
+    return;
+  }
+  if (!next) return;
+  const rest = state.tasks.filter((t) => t.id !== id);
+  setTasks([next, ...rest].sort((a, b) => b.created_at.localeCompare(a.created_at)));
+}
+
+function applyRemoteContext(event: string, next: Context | null, prevId: string | undefined): void {
+  const id = next?.id ?? prevId;
+  if (!id || hasPendingForRow(id)) return;
+  if (event === 'DELETE') {
+    setContexts(state.contexts.filter((c) => c.id !== id));
+    return;
+  }
+  if (!next) return;
+  const rest = state.contexts.filter((c) => c.id !== id);
+  setContexts([...rest, next].sort((a, b) => a.created_at.localeCompare(b.created_at)));
+}
+
+function onResume(): void {
+  if (document.visibilityState === 'visible') void fetchAll();
+}
+
+async function subscribeRealtime(): Promise<void> {
+  teardownRealtime();
+  const { data } = await supabase.auth.getUser();
+  const userId = data.user?.id;
+  if (!userId) return;
+  const filter = `user_id=eq.${userId}`;
+
+  channel = supabase
+    .channel('stash-sync')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'tasks', filter },
+      (payload) => applyRemoteTask(payload.eventType, payload.new as Task, (payload.old as { id?: string }).id),
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'contexts', filter },
+      (payload) => applyRemoteContext(payload.eventType, payload.new as Context, (payload.old as { id?: string }).id),
+    )
+    .subscribe();
+
+  document.addEventListener('visibilitychange', onResume);
+  window.addEventListener('focus', onResume);
+}
+
+function teardownRealtime(): void {
+  document.removeEventListener('visibilitychange', onResume);
+  window.removeEventListener('focus', onResume);
+  if (channel) {
+    void supabase.removeChannel(channel);
+    channel = null;
+  }
+}
+
 async function seedDefaultsIfEmpty(): Promise<void> {
   if (state.contexts.length > 0 || readQueue().length > 0) return;
   const now = new Date().toISOString();
@@ -210,6 +282,7 @@ export async function init(): Promise<void> {
   await flush();
   await fetchAll();
   await seedDefaultsIfEmpty();
+  await subscribeRealtime();
   set({ loaded: true });
 
   window.addEventListener('online', () => {
@@ -225,6 +298,7 @@ export async function init(): Promise<void> {
 }
 
 export function reset(): void {
+  teardownRealtime();
   localStorage.removeItem(KEY.tasks);
   localStorage.removeItem(KEY.contexts);
   localStorage.removeItem(KEY.queue);

@@ -1,88 +1,107 @@
-# Engineering Brief — Swipe + Undo, Inline #tag Capture, Share Target
+# Engineering Brief — Live Cross-Device Sync (Supabase Realtime)
 
 ## Outcome
-Three additions that reinforce Stash's "capture now, sort never" philosophy without adding a
-second organizing axis:
-1. Faster, safer task actions (swipe + undo).
-2. Tagging without leaving the single capture field (inline `#tag`).
-3. Capture from outside the app (PWA share target).
+A change made on one device (e.g. phone) appears on every other signed-in device (e.g. laptop)
+within seconds, with no manual refresh, no app restart, and no "close and reopen" ritual. The
+task list and contexts are the same everywhere, all the time.
+
+## Problem (root cause)
+`lib/store.ts` only pulls fresh server data at two moments: `init()` (cold start) and the
+browser `online` event. There is **no live subscription**. So a write on device A never reaches
+device B until B cold-starts or reconnects. Worse, an installed PWA resuming from background does
+not re-run `init()`, so it keeps rendering the stale localStorage snapshot — which is why
+reopening doesn't fix it.
 
 ## In Scope
-- **Swipe gestures** on a task row: swipe right → complete, swipe left → delete. Hand-rolled
-  with native pointer events (no new dependency). Coexists with existing checkbox-tap (complete)
-  and body-tap (edit) without firing them accidentally.
-- **Undo toast** for both delete and complete. 5-second auto-dismiss, single "Undo" action.
-  Delete restores the full task row (same id, re-sorted by `created_at`). Complete toggles back.
-- **Inline `#tag` capture**: typing `buy cables #work` applies the matching context (by name,
-  case-insensitive) and strips the token from the title. Unmatched `#word` is left as literal
-  text. Combines with any tags already selected / the active filter context.
-- **PWA share target**: shared title/text/url opens Stash with the capture bar prefilled; the
-  user confirms with one tap (and can add a context first). `method: GET`, query params, URL
-  cleaned after read.
+- **Realtime subscription** to `public.tasks` and `public.contexts`, scoped to the current
+  `user_id`, via Supabase `postgres_changes` on the authenticated client.
+- **Apply remote changes to the store**: INSERT / UPDATE / DELETE events reconcile into the
+  in-memory state and localStorage, then notify React subscribers (existing `set()` path).
+- **Conflict rule — protect local edits**: ignore an incoming remote event for any row that
+  still has a pending op in the offline write queue. Once that row's op flushes, normal sync
+  resumes. Local in-progress/offline edits are never clobbered.
+- **Resume refetch**: on `document` `visibilitychange` → visible and `window` `focus`, re-pull
+  via the existing `fetchAll()`. Covers the backgrounded-PWA / locked-phone case where the
+  websocket slept and missed events.
+- **Lifecycle**: subscribe after auth/`init`; unsubscribe and resubscribe cleanly on sign-out /
+  sign-in and on `reset()`.
+- **DB enablement**: add `tasks` and `contexts` to the `supabase_realtime` publication and set
+  `REPLICA IDENTITY FULL` on both (so DELETE events carry `user_id` for filtering). Added to
+  `supabase/schema.sql`.
 
 ## Out of Scope
-- Auto-creating contexts from unmatched tags.
-- Live `#tag` highlighting while typing (parse on submit only — no new UI).
-- iOS share target (platform doesn't support Web Share Target — accepted limitation).
-- Reordering, due dates, or anything from the "out of scope" section of BACKLOG.md.
+- Presence / "another device active" indicators, typing indicators, cursors. (Strictly data sync.)
+- `updated_at` columns / timestamp-based merge. (Conflict rule is pending-queue based, not clocks.)
+- Field-level / CRDT merge of simultaneous edits to the same field. Row-level reconcile only.
+- Any change to the existing optimistic write path, offline queue, swipe/undo, or capture logic
+  beyond what's needed to wire in realtime.
+- New dependencies. `@supabase/supabase-js` already ships the realtime client.
 
 ## Key Flows
-- **Swipe complete/delete**: pointer down on row → if horizontal drag dominates, translate the
-  foreground and reveal a colored action layer (accent+check on the left, red+trash on the
-  right) → release past ~80px threshold fires the action → an Undo toast appears.
-- **Inline tag**: submit → parse `#token`s → matched tokens become context ids and are removed
-  from the title → task created with union of typed + selected tags.
-- **Share**: external app → "Share to Stash" → app opens at `/Stash/?title=…&text=…&url=…` →
-  capture bar prefilled with the composed text → user taps Add.
+- **Remote insert/update**: event arrives → if the row id has a pending queued op, skip →
+  otherwise upsert the row into `tasks`/`contexts`, persist, notify. Tasks stay sorted by
+  `created_at` desc, contexts by `created_at` asc (matching `fetchAll`).
+- **Remote delete**: event arrives → if pending op for that id, skip → otherwise remove the row,
+  persist, notify.
+- **Resume**: tab becomes visible or window regains focus → `fetchAll()` reconciles the full
+  set (also a safety net for any event missed while asleep).
+- **Sign-out**: tear down the channel so no events leak across sessions; `reset()` also tears down.
 
 ## Edge Cases and Error Handling
-- Swipe that doesn't pass threshold snaps back, fires nothing, and suppresses the trailing click.
-- Vertical scroll is preserved (`touch-action: pan-y`); only horizontal-dominant drags swipe.
-- Title that becomes empty after stripping tags (e.g. just `#home`) creates nothing.
-- Undo after delete re-enqueues an insert; offline queue handles it like any other write.
-- Share params absent → app behaves normally; capture bar empty.
-- Duplicate tag ids are de-duplicated.
+- **Echo of own writes**: this device's own insert/update arrives back as a realtime event. The
+  pending-queue guard skips it while unsynced; after flush the row already matches, so applying
+  it is a no-op. No flespeckering, no duplicates.
+- **DELETE payloads**: Postgres only sends the primary key on delete unless `REPLICA IDENTITY
+  FULL`. We set FULL so the `user_id` filter holds and we get the old row id reliably.
+- **Pending guard correctness**: the guard checks the live offline queue (`readQueue()`), not a
+  cached count, so it reflects the true unsynced set at event time.
+- **Resort after upsert**: an updated `created_at` (shouldn't change, but defensively) keeps
+  ordering stable by re-sorting on every apply.
+- **Channel drop / network blip**: realtime auto-reconnects; the resume refetch + existing
+  `online` handler + 15s queue retry cover any gap.
+- **Unauthenticated / missing session**: no channel is opened until there is a session.
 
 ## Tech Stack
-- Language/Framework: React 18 + TypeScript, Vite.
-- Styling: Tailwind (existing dark token set: bg, surface, elevated, line, muted, accent).
-- Data: Supabase (Postgres + RLS) via the custom optimistic store + offline queue in `lib/store.ts`.
-- Platform: Static PWA on GitHub Pages, base `/Stash/`, vite-plugin-pwa (Workbox, autoUpdate).
-- Constraint: no new dependencies (frontend is currently dependency-free beyond React/Supabase).
+- React 18 + TypeScript, Vite. Tailwind (existing dark token set).
+- Supabase JS v2 (`@supabase/supabase-js`) — realtime client included.
+- Static PWA on GitHub Pages, base `/Stash/`, vite-plugin-pwa (Workbox, autoUpdate).
+- Constraint: no new dependencies.
 
 ## Non-Functional Requirements
 | Area | Requirement |
 |---|---|
-| Performance | All actions optimistic/local; swipe at 60fps via transform only. |
-| Security | Unchanged — RLS already scopes all rows to the user. |
-| Scalability | N/A (per-user task list). |
-| Resilience | Undo/restore use the existing offline write queue. |
-| Observability | N/A. |
-| Compliance | N/A. |
+| Performance | Updates land in seconds; apply path is O(n) over the small per-user list. No polling. |
+| Security | Realtime respects RLS via the authed client; channel filtered to `auth.uid()`'s rows. |
+| Scalability | One channel, two table subscriptions, per user. Personal-scale data. |
+| Resilience | Auto-reconnect + resume refetch + existing offline queue/online retry as safety nets. |
+| Observability | N/A (personal app); transient subscribe failures degrade to refetch-on-resume. |
+| Compliance | Unchanged — RLS already scopes all rows to the owning user. |
 
 ## Integration Points
 | Dependency | Protocol | Failure Mode |
 |---|---|---|
-| Supabase tasks table | existing store ops (insert/update/delete) | queued offline, retried |
-| Web Share Target API | manifest `share_target`, GET query params | unsupported on iOS → feature absent, app unaffected |
+| Supabase Realtime (`postgres_changes`) | WebSocket via authed supabase-js client | Auto-reconnects; gaps covered by resume refetch + online retry. |
+| `supabase_realtime` publication + `REPLICA IDENTITY FULL` | one-time SQL in dashboard | If not run, feature silently does nothing — hard prerequisite. |
 
 ## Domain Nomenclature
 | Term | Definition |
 |---|---|
-| Context | A user-curated tag (IOM/Work/Home/Personal…); the one organizing axis. |
-| Capture | Adding a task via the always-visible single input. |
-| Toast | Transient bottom banner with an Undo action. |
-| Swipe action | Horizontal drag on a task row that completes (right) or deletes (left). |
+| Realtime channel | The single Supabase channel carrying `postgres_changes` for this user's tables. |
+| Remote event | An INSERT/UPDATE/DELETE broadcast originating from any device (including this one). |
+| Pending guard | The rule that skips a remote event whose row id has an unsynced op in the offline queue. |
+| Resume refetch | Full `fetchAll()` triggered on tab visible / window focus. |
 
 ## Open Risks / Unknowns
-- iOS cannot use the share target. Accepted.
-- Some apps send identical `text` and `url` on share → minor duplication in the prefilled
-  string. Accepted (user edits before saving).
+- **Hard prerequisite**: Realtime must be enabled for the project AND the two tables added to the
+  publication with `REPLICA IDENTITY FULL`. Until the user runs this SQL in Supabase, sync won't
+  fire. Flagged as a setup step, not a code risk.
+- iOS PWA websocket behaviour when fully backgrounded is OS-throttled; the resume refetch is the
+  mitigation. Accepted.
 
 ## Definition of Done
-- [ ] Swipe right completes, swipe left deletes; vertical scroll still works; no accidental
-      edit/complete from a swipe.
-- [ ] Undo toast appears for delete and complete and correctly reverses each within 5s.
-- [ ] `#existingcontext` in capture applies that context and is stripped; unmatched `#word` stays.
-- [ ] `share_target` declared; sharing into the installed app prefills the capture bar.
+- [ ] Editing/adding/deleting on device A reflects on device B within a few seconds, no reload.
+- [ ] A remote event does NOT overwrite a row that has an unsynced local edit; it applies after flush.
+- [ ] Reopening / refocusing the app pulls the latest state (resume refetch works).
+- [ ] Channel is torn down on sign-out and re-established on sign-in; no cross-session leakage.
+- [ ] `supabase/schema.sql` includes publication + `REPLICA IDENTITY FULL`; documented as a step.
 - [ ] No new dependencies; `npm run build` (tsc + vite) passes.

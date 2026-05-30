@@ -45,3 +45,27 @@ create policy "own tasks" on public.tasks
   for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+-- ── Realtime (live cross-device sync) ───────────────────────
+-- Broadcast row changes so every signed-in device stays in sync.
+-- REPLICA IDENTITY FULL makes DELETE events carry the whole old row
+-- (incl. user_id) so the client's user_id filter applies to deletes too.
+alter table public.tasks    replica identity full;
+alter table public.contexts replica identity full;
+
+-- Add both tables to Supabase's realtime publication (idempotent).
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'tasks'
+  ) then
+    alter publication supabase_realtime add table public.tasks;
+  end if;
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'contexts'
+  ) then
+    alter publication supabase_realtime add table public.contexts;
+  end if;
+end $$;

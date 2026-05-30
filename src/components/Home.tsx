@@ -15,15 +15,20 @@ function matchesFilter(task: Task, filter: Filter): boolean {
   return task.contexts.includes(filter);
 }
 
-/** Read text shared into the app via the PWA share target, then clean the URL. */
-function readSharedText(): string {
+/**
+ * Read content shared into the app via the PWA share target, then clean the URL.
+ * The full detail becomes the note (it can be long); the first few words are
+ * offered as a suggested title.
+ */
+function readShared(): { title: string; note: string } {
   const params = new URLSearchParams(window.location.search);
-  const shared = [params.get('title'), params.get('text'), params.get('url')]
+  const note = [params.get('title'), params.get('text'), params.get('url')]
     .filter(Boolean)
-    .join(' ')
+    .join('\n')
     .trim();
-  if (shared) window.history.replaceState({}, '', window.location.pathname);
-  return shared;
+  if (note) window.history.replaceState({}, '', window.location.pathname);
+  const title = note.split(/\s+/).slice(0, 6).join(' ');
+  return { title, note };
 }
 
 export function Home() {
@@ -32,7 +37,7 @@ export function Home() {
   const [showCompleted, setShowCompleted] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
-  const sharedText = useMemo(readSharedText, []);
+  const shared = useMemo(readShared, []);
 
   const visible = useMemo(() => tasks.filter((t) => matchesFilter(t, filter)), [tasks, filter]);
   const active = visible.filter((t) => !t.completed);
@@ -54,7 +59,12 @@ export function Home() {
         </div>
       </header>
 
-      <CaptureBar contexts={contexts} activeContextId={activeContextId} initialTitle={sharedText} />
+      <CaptureBar
+        contexts={contexts}
+        activeContextId={activeContextId}
+        initialTitle={shared.title}
+        initialNote={shared.note}
+      />
       <FilterBar contexts={contexts} active={filter} onChange={setFilter} onManage={() => setManageOpen(true)} />
 
       <main className="flex-1">

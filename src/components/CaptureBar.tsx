@@ -8,6 +8,8 @@ interface Props {
   activeContextId: string | null;
   /** Text shared into the app via the PWA share target, used to prefill the input. */
   initialTitle?: string;
+  /** Full shared detail, prefilled into the note (revealed when present). */
+  initialNote?: string;
 }
 
 /**
@@ -26,8 +28,9 @@ function parseTags(title: string, contexts: Context[]): { title: string; tagIds:
   return { title: cleaned.replace(/\s{2,}/g, ' ').trim(), tagIds };
 }
 
-export function CaptureBar({ contexts, activeContextId, initialTitle = '' }: Props) {
+export function CaptureBar({ contexts, activeContextId, initialTitle = '', initialNote = '' }: Props) {
   const [title, setTitle] = useState(initialTitle);
+  const [note, setNote] = useState(initialNote);
   const [tags, setTags] = useState<string[]>(activeContextId ? [activeContextId] : []);
   const [showTags, setShowTags] = useState(false);
 
@@ -40,8 +43,9 @@ export function CaptureBar({ contexts, activeContextId, initialTitle = '' }: Pro
     const { title: parsedTitle, tagIds } = parseTags(title, contexts);
     if (!parsedTitle) return;
     const merged = [...new Set([...tags, ...tagIds])];
-    createTask(parsedTitle, merged);
+    createTask(parsedTitle, merged, note);
     setTitle('');
+    setNote('');
     setTags(activeContextId ? [activeContextId] : []);
     setShowTags(false);
   }
@@ -79,6 +83,16 @@ export function CaptureBar({ contexts, activeContextId, initialTitle = '' }: Pro
           Add
         </button>
       </div>
+
+      {note && (
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Note"
+          rows={4}
+          className="mt-2 w-full resize-none rounded-xl border border-line bg-surface px-4 py-3 text-sm outline-none placeholder:text-muted focus:border-accent"
+        />
+      )}
 
       {showTags && contexts.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">

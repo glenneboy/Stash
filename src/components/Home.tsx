@@ -22,31 +22,17 @@ function matchesQuery(task: Task, q: string): boolean {
   return task.title.toLowerCase().includes(q) || (task.note?.toLowerCase().includes(q) ?? false);
 }
 
-type DateGroup = 'Today' | 'Yesterday' | 'Earlier';
-const DATE_GROUPS: DateGroup[] = ['Today', 'Yesterday', 'Earlier'];
-const DAY = 86_400_000;
-
-function startOfDay(date: Date): number {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+type SortField = 'date' | 'title';
+type SortDir = 'asc' | 'desc';
+interface Sort {
+  field: SortField;
+  dir: SortDir;
 }
 
-function dateGroup(iso: string): DateGroup {
-  const diff = startOfDay(new Date()) - startOfDay(new Date(iso));
-  if (diff <= 0) return 'Today';
-  if (diff === DAY) return 'Yesterday';
-  return 'Earlier';
-}
-
-// Split an already date-sorted list into Today / Yesterday / Earlier, preserving order.
-function groupByDate(tasks: Task[]): { label: DateGroup; items: Task[] }[] {
-  const buckets = new Map<DateGroup, Task[]>();
-  for (const t of tasks) {
-    const g = dateGroup(t.created_at);
-    const bucket = buckets.get(g) ?? [];
-    bucket.push(t);
-    buckets.set(g, bucket);
-  }
-  return DATE_GROUPS.filter((g) => buckets.has(g)).map((label) => ({ label, items: buckets.get(label)! }));
+function sortTasks(tasks: Task[], { field, dir }: Sort): Task[] {
+  const cmp = (a: Task, b: Task) =>
+    field === 'title' ? a.title.localeCompare(b.title) : a.created_at.localeCompare(b.created_at);
+  return [...tasks].sort((a, b) => (dir === 'asc' ? cmp(a, b) : -cmp(a, b)));
 }
 
 /**
@@ -73,6 +59,8 @@ export function Home() {
   const [manageOpen, setManageOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [activeSort, setActiveSort] = useState<Sort>({ field: 'date', dir: 'desc' });
+  const [completedSort, setCompletedSort] = useState<Sort>({ field: 'date', dir: 'desc' });
   const shared = useMemo(readShared, []);
 
   // Quick-capture deeplink: `?add=<text>` creates a task headlessly once the store has
@@ -93,9 +81,8 @@ export function Home() {
     () => tasks.filter((t) => matchesFilter(t, filter) && matchesQuery(t, q)),
     [tasks, filter, q],
   );
-  const active = visible.filter((t) => !t.completed);
-  const completed = visible.filter((t) => t.completed);
-  const groups = useMemo(() => groupByDate(active), [active]);
+  const active = useMemo(() => sortTasks(visible.filter((t) => !t.completed), activeSort), [visible, activeSort]);
+  const completed = useMemo(() => sortTasks(visible.filter((t) => t.completed), completedSort), [visible, completedSort]);
 
   const activeContextId = filter === ALL_FILTER ? null : filter;
 
@@ -161,18 +148,18 @@ export function Home() {
             <EmptyState loaded={loaded} />
           )
         ) : (
-          groups.map((group) => (
-            <section key={group.label}>
-              <h2 className="px-4 pb-1 pt-4 text-xs font-medium uppercase tracking-wide text-muted">
-                {group.label}
-              </h2>
-              <ul className="divide-y divide-line/60">
-                {group.items.map((t) => (
-                  <TaskItem key={t.id} task={t} contexts={contexts} onEdit={setEditing} />
-                ))}
-              </ul>
-            </section>
-          ))
+          <>
+            {active.length > 0 && (
+              <div className="flex items-center justify-end px-4 pt-2">
+                <SortControl sort={activeSort} onChange={setActiveSort} />
+              </div>
+            )}
+            <ul className="divide-y divide-line/60">
+              {active.map((t) => (
+                <TaskItem key={t.id} task={t} contexts={contexts} onEdit={setEditing} />
+              ))}
+            </ul>
+          </>
         )}
 
         {completed.length > 0 && (
@@ -182,6 +169,7 @@ export function Home() {
                 Completed ({completed.length})
               </button>
               <div className="flex items-center gap-4">
+                {showCompleted && <SortControl sort={completedSort} onChange={setCompletedSort} />}
                 <button onClick={clearCompleted} className="text-muted hover:text-red-400">
                   Clear
                 </button>
@@ -204,6 +192,48 @@ export function Home() {
       )}
       {manageOpen && <ContextManager contexts={contexts} onClose={() => setManageOpen(false)} />}
       <Toast />
+    </div>
+  );
+}
+
+const SORT_FIELDS: { field: SortField; label: string }[] = [
+  { field: 'date', label: 'Date' },
+  { field: 'title', label: 'Title' },
+];
+
+function SortControl({ sort, onChange }: { sort: Sort; onChange: (s: Sort) => void }) {
+  const [open, setOpen] = useState(false);
+
+  function pick(field: SortField) {
+    if (field === sort.field) onChange({ field, dir: sort.dir === 'asc' ? 'desc' : 'asc' });
+    else onChange({ field, dir: field === 'date' ? 'desc' : 'asc' });
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen((o) => !o)} aria-label="Sort" className={open ? 'text-accent' : 'text-muted'}>
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M7 4v16m0 0l-3-3m3 3l3-3M17 20V4m0 0l-3 3m3-3l3 3" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-20 mt-1 w-32 overflow-hidden rounded-xl border border-line bg-elevated shadow-lg">
+            {SORT_FIELDS.map(({ field, label }) => (
+              <button
+                key={field}
+                onClick={() => pick(field)}
+                className="flex w-full items-center justify-between px-3 py-2 text-sm text-muted"
+              >
+                <span className={field === sort.field ? 'text-accent' : ''}>{label}</span>
+                {field === sort.field && <span className="text-accent">{sort.dir === 'asc' ? '↑' : '↓'}</span>}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

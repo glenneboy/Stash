@@ -24,7 +24,7 @@ export function ContextManager({ contexts, onClose }: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-line" />
-        <h2 className="mb-3 text-lg font-semibold">Contexts</h2>
+        <h2 className="mb-3 text-lg font-semibold">Tags</h2>
 
         <ul className="space-y-2">
           {contexts.map((c) => (
@@ -36,7 +36,7 @@ export function ContextManager({ contexts, onClose }: Props) {
           <input
             value={adding}
             onChange={(e) => setAdding(e.target.value)}
-            placeholder="New context"
+            placeholder="New tag"
             className="min-w-0 flex-1 rounded-xl border border-line bg-bg px-4 py-3 text-base outline-none placeholder:text-muted focus:border-accent"
           />
           <button

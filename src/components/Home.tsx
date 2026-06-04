@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Filter, Task } from '../types';
 import { ALL_FILTER } from '../types';
 import { useStore } from '../lib/useStore';
-import { quickAddTask } from '../lib/store';
+import { quickAddTask, clearCompleted } from '../lib/store';
 import { parseTags } from '../lib/tags';
 import { supabase } from '../lib/supabase';
 import { CaptureBar } from './CaptureBar';
@@ -15,6 +15,38 @@ import { Toast } from './Toast';
 function matchesFilter(task: Task, filter: Filter): boolean {
   if (filter === ALL_FILTER) return true;
   return task.contexts.includes(filter);
+}
+
+function matchesQuery(task: Task, q: string): boolean {
+  if (!q) return true;
+  return task.title.toLowerCase().includes(q) || (task.note?.toLowerCase().includes(q) ?? false);
+}
+
+type DateGroup = 'Today' | 'Yesterday' | 'Earlier';
+const DATE_GROUPS: DateGroup[] = ['Today', 'Yesterday', 'Earlier'];
+const DAY = 86_400_000;
+
+function startOfDay(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function dateGroup(iso: string): DateGroup {
+  const diff = startOfDay(new Date()) - startOfDay(new Date(iso));
+  if (diff <= 0) return 'Today';
+  if (diff === DAY) return 'Yesterday';
+  return 'Earlier';
+}
+
+// Split an already date-sorted list into Today / Yesterday / Earlier, preserving order.
+function groupByDate(tasks: Task[]): { label: DateGroup; items: Task[] }[] {
+  const buckets = new Map<DateGroup, Task[]>();
+  for (const t of tasks) {
+    const g = dateGroup(t.created_at);
+    const bucket = buckets.get(g) ?? [];
+    bucket.push(t);
+    buckets.set(g, bucket);
+  }
+  return DATE_GROUPS.filter((g) => buckets.has(g)).map((label) => ({ label, items: buckets.get(label)! }));
 }
 
 /**
@@ -39,6 +71,8 @@ export function Home() {
   const [showCompleted, setShowCompleted] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const shared = useMemo(readShared, []);
 
   // Quick-capture deeplink: `?add=<text>` creates a task headlessly once the store has
@@ -54,11 +88,23 @@ export function Home() {
     if (title) quickAddTask(title, tagIds);
   }, [loaded, contexts]);
 
-  const visible = useMemo(() => tasks.filter((t) => matchesFilter(t, filter)), [tasks, filter]);
+  const q = query.trim().toLowerCase();
+  const visible = useMemo(
+    () => tasks.filter((t) => matchesFilter(t, filter) && matchesQuery(t, q)),
+    [tasks, filter, q],
+  );
   const active = visible.filter((t) => !t.completed);
   const completed = visible.filter((t) => t.completed);
+  const groups = useMemo(() => groupByDate(active), [active]);
 
   const activeContextId = filter === ALL_FILTER ? null : filter;
+
+  function toggleSearch() {
+    setSearchOpen((open) => {
+      if (open) setQuery('');
+      return !open;
+    });
+  }
 
   return (
     <div className="mx-auto flex min-h-screen max-w-xl flex-col">
@@ -68,6 +114,16 @@ export function Home() {
           {!online && <span className="text-amber-400">Offline</span>}
           {online && syncing && <span>Syncing…</span>}
           {online && !syncing && pending > 0 && <span>{pending} queued</span>}
+          <button
+            onClick={toggleSearch}
+            aria-label="Search"
+            className={searchOpen ? 'text-accent' : ''}
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="7" />
+              <path d="M21 21l-4.3-4.3" strokeLinecap="round" />
+            </svg>
+          </button>
           <button onClick={() => supabase.auth.signOut()} className="underline">
             Sign out
           </button>
@@ -82,26 +138,56 @@ export function Home() {
       />
       <FilterBar contexts={contexts} active={filter} onChange={setFilter} onManage={() => setManageOpen(true)} />
 
+      {searchOpen && (
+        <div className="border-b border-line px-4 py-2">
+          <input
+            autoFocus
+            enterKeyHint="search"
+            placeholder="Search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="w-full rounded-xl border border-line bg-surface px-4 py-2 text-base outline-none placeholder:text-muted focus:border-accent"
+          />
+        </div>
+      )}
+
       <main className="flex-1">
         {active.length === 0 && completed.length === 0 ? (
-          <EmptyState loaded={loaded} />
+          q ? (
+            <div className="grid place-items-center px-8 py-24 text-center">
+              <p className="text-muted">No matches for “{query.trim()}”.</p>
+            </div>
+          ) : (
+            <EmptyState loaded={loaded} />
+          )
         ) : (
-          <ul className="divide-y divide-line/60">
-            {active.map((t) => (
-              <TaskItem key={t.id} task={t} contexts={contexts} onEdit={setEditing} />
-            ))}
-          </ul>
+          groups.map((group) => (
+            <section key={group.label}>
+              <h2 className="px-4 pb-1 pt-4 text-xs font-medium uppercase tracking-wide text-muted">
+                {group.label}
+              </h2>
+              <ul className="divide-y divide-line/60">
+                {group.items.map((t) => (
+                  <TaskItem key={t.id} task={t} contexts={contexts} onEdit={setEditing} />
+                ))}
+              </ul>
+            </section>
+          ))
         )}
 
         {completed.length > 0 && (
           <section className="mt-2 border-t border-line">
-            <button
-              onClick={() => setShowCompleted((s) => !s)}
-              className="flex w-full items-center justify-between px-4 py-3 text-sm text-muted"
-            >
-              <span>Completed ({completed.length})</span>
-              <span>{showCompleted ? 'Hide' : 'Show'}</span>
-            </button>
+            <div className="flex w-full items-center justify-between px-4 py-3 text-sm text-muted">
+              <button onClick={() => setShowCompleted((s) => !s)} className="flex-1 text-left">
+                Completed ({completed.length})
+              </button>
+              <div className="flex items-center gap-4">
+                <button onClick={clearCompleted} className="text-muted hover:text-red-400">
+                  Clear
+                </button>
+                <button onClick={() => setShowCompleted((s) => !s)}>{showCompleted ? 'Hide' : 'Show'}</button>
+              </div>
+            </div>
             {showCompleted && (
               <ul className="divide-y divide-line/60">
                 {completed.map((t) => (

@@ -340,7 +340,24 @@ export function toggleComplete(id: string): void {
   const completed_at = completed ? new Date().toISOString() : null;
   setTasks(state.tasks.map((t) => (t.id === id ? { ...t, completed, completed_at } : t)));
   enqueue({ kind: 'task.update', id, patch: { completed, completed_at } });
-  if (completed) showToast('Completed', () => toggleComplete(id));
+  if (completed) {
+    navigator.vibrate?.(15);
+    showToast('Completed', () => toggleComplete(id));
+  }
+}
+
+export function clearCompleted(): void {
+  const cleared = state.tasks.filter((t) => t.completed);
+  if (cleared.length === 0) return;
+  setTasks(state.tasks.filter((t) => !t.completed));
+  cleared.forEach((t) => enqueue({ kind: 'task.delete', id: t.id }));
+  showToast(`Cleared ${cleared.length}`, () => restoreMany(cleared));
+}
+
+function restoreMany(tasks: Task[]): void {
+  const merged = [...state.tasks, ...tasks].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  setTasks(merged);
+  tasks.forEach((row) => enqueue({ kind: 'task.insert', row }));
 }
 
 export function deleteTask(id: string): void {

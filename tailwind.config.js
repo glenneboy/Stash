@@ -15,6 +15,16 @@ export default {
       fontFamily: {
         sans: ['system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
       },
+      keyframes: {
+        pop: {
+          '0%': { transform: 'scale(1)' },
+          '40%': { transform: 'scale(1.3)' },
+          '100%': { transform: 'scale(1)' },
+        },
+      },
+      animation: {
+        pop: 'pop 250ms ease-out',
+      },
     },
   },
   plugins: [],

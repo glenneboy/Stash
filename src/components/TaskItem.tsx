@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Context, Task } from '../types';
 import { toggleComplete, deleteTask } from '../lib/store';
 
@@ -19,6 +19,19 @@ export function TaskItem({ task, contexts, onEdit }: Props) {
   const start = useRef<{ x: number; y: number } | null>(null);
   const swiping = useRef(false);
   const justSwiped = useRef(false);
+
+  // Pop the checkbox only when a task transitions into the completed state.
+  const [pop, setPop] = useState(false);
+  const wasCompleted = useRef(task.completed);
+  useEffect(() => {
+    if (task.completed && !wasCompleted.current) {
+      setPop(true);
+      const id = setTimeout(() => setPop(false), 250);
+      wasCompleted.current = task.completed;
+      return () => clearTimeout(id);
+    }
+    wasCompleted.current = task.completed;
+  }, [task.completed]);
 
   function onPointerDown(e: React.PointerEvent) {
     start.current = { x: e.clientX, y: e.clientY };
@@ -91,7 +104,7 @@ export function TaskItem({ task, contexts, onEdit }: Props) {
           onClick={() => toggleComplete(task.id)}
           className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 transition ${
             task.completed ? 'border-accent bg-accent text-black' : 'border-muted'
-          }`}
+          } ${pop ? 'animate-pop' : ''}`}
         >
           {task.completed && (
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="3">

@@ -120,7 +120,7 @@ export function TaskItem({ task, contexts, onEdit }: Props) {
             {hasReminder(task) && (
               <svg
                 viewBox="0 0 24 24"
-                aria-label="Reminder set"
+                aria-hidden="true"
                 className={`h-3.5 w-3.5 shrink-0 ${isOverdue(task) ? 'text-accent' : 'text-muted'}`}
                 fill="none"
                 stroke="currentColor"

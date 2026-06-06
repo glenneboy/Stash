@@ -12,7 +12,7 @@ precacheAndRoute(self.__WB_MANIFEST);
 // SPA navigation fallback (parity with the previous generateSW navigateFallback).
 registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html')));
 
-self.skipWaiting();
+self.addEventListener('install', (event) => event.waitUntil(self.skipWaiting()));
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 
 interface PushPayload {
@@ -46,11 +46,9 @@ self.addEventListener('notificationclick', (event) => {
   const url = taskId ? `/Stash/?task=${taskId}` : '/Stash/';
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      for (const client of clients) {
-        if ('focus' in client) {
-          void client.navigate(url);
-          return client.focus();
-        }
+      const existing = clients.find((c) => c.url.includes('/Stash/'));
+      if (existing) {
+        return existing.navigate(url).then((c) => (c ?? existing).focus());
       }
       return self.clients.openWindow(url);
     }),

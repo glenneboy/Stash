@@ -356,7 +356,12 @@ export function toggleComplete(id: string): void {
   const completed = !task.completed;
   const completed_at = completed ? new Date().toISOString() : null;
   const patch: Partial<Task> = { completed, completed_at };
-  if (completed) patch.notify_next_at = null;
+  if (completed) {
+    patch.notify_next_at = null;
+  } else if (task.reminder_at) {
+    patch.notify_next_at = task.reminder_at;
+    patch.notify_stage = 0;
+  }
   setTasks(state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   enqueue({ kind: 'task.update', id, patch });
   if (completed) {

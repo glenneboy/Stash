@@ -74,7 +74,9 @@ export function FilterBar({
           ref={scrollRef}
           className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {contexts.map((c) => (
+          {[...contexts]
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((c) => (
             <Chip
               key={c.id}
               label={c.name}
@@ -84,7 +86,7 @@ export function FilterBar({
               onTap={() => onQuickPress(c.id)}
               onLong={() => onToggleSticky(c.id)}
             />
-          ))}
+            ))}
         </div>
         {edges.left && (
           <div className="pointer-events-none absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-bg to-transparent" />

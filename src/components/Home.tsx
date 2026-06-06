@@ -203,7 +203,7 @@ export function Home() {
               </button>
               <div className="flex items-center gap-4">
                 {showCompleted && <SortControl sort={completedSort} onChange={setCompletedSort} />}
-                <button onClick={clearCompleted} className="text-muted hover:text-red-400">
+                <button onClick={() => clearCompleted(completed)} className="text-muted hover:text-red-400">
                   Clear
                 </button>
                 <button onClick={() => setShowCompleted((s) => !s)}>{showCompleted ? 'Hide' : 'Show'}</button>

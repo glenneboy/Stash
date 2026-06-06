@@ -316,6 +316,9 @@ export function createTask(title: string, contexts: string[], note?: string): st
     completed: false,
     created_at: new Date().toISOString(),
     completed_at: null,
+    reminder_at: null,
+    notify_next_at: null,
+    notify_stage: 0,
   };
   setTasks([row, ...state.tasks]);
   enqueue({ kind: 'task.insert', row });
@@ -333,13 +336,29 @@ export function updateTask(id: string, patch: Partial<Pick<Task, 'title' | 'note
   enqueue({ kind: 'task.update', id, patch });
 }
 
+// Set/replace a one-off reminder. Resets the nudge schedule to stage 0 at the new time.
+export function setReminder(id: string, reminderAt: string): void {
+  const patch: Partial<Task> = { reminder_at: reminderAt, notify_next_at: reminderAt, notify_stage: 0 };
+  setTasks(state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  enqueue({ kind: 'task.update', id, patch });
+}
+
+// Remove a reminder and cancel any pending nudges.
+export function clearReminder(id: string): void {
+  const patch: Partial<Task> = { reminder_at: null, notify_next_at: null, notify_stage: 0 };
+  setTasks(state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  enqueue({ kind: 'task.update', id, patch });
+}
+
 export function toggleComplete(id: string): void {
   const task = state.tasks.find((t) => t.id === id);
   if (!task) return;
   const completed = !task.completed;
   const completed_at = completed ? new Date().toISOString() : null;
-  setTasks(state.tasks.map((t) => (t.id === id ? { ...t, completed, completed_at } : t)));
-  enqueue({ kind: 'task.update', id, patch: { completed, completed_at } });
+  const patch: Partial<Task> = { completed, completed_at };
+  if (completed) patch.notify_next_at = null;
+  setTasks(state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  enqueue({ kind: 'task.update', id, patch });
   if (completed) {
     navigator.vibrate?.(15);
     showToast('Completed', () => toggleComplete(id));

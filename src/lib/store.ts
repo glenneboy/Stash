@@ -346,10 +346,10 @@ export function toggleComplete(id: string): void {
   }
 }
 
-export function clearCompleted(): void {
-  const cleared = state.tasks.filter((t) => t.completed);
+export function clearCompleted(cleared: Task[]): void {
   if (cleared.length === 0) return;
-  setTasks(state.tasks.filter((t) => !t.completed));
+  const ids = new Set(cleared.map((t) => t.id));
+  setTasks(state.tasks.filter((t) => !ids.has(t.id)));
   cleared.forEach((t) => enqueue({ kind: 'task.delete', id: t.id }));
   showToast(`Cleared ${cleared.length}`, () => restoreMany(cleared));
 }

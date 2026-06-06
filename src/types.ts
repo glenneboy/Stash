@@ -13,6 +13,3 @@ export interface Task {
   created_at: string;
   completed_at: string | null;
 }
-
-export const ALL_FILTER = 'all' as const;
-export type Filter = typeof ALL_FILTER | string;

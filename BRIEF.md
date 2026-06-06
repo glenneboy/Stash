@@ -1,108 +1,108 @@
-# Engineering Brief — Quick-Capture Deeplink (`?add=`)
+# Engineering Brief — Multi-Context Select (Sticky + Transient Views)
+
+_GitHub issue #6 (glenneboy/Stash)._
 
 ## Outcome
-From a Mac launcher (jeebs / Raycast / Alfred) or an Apple Shortcut, the user types
-`stash This is my task #iom`, the launcher opens a Stash URL with the text as a query string,
-and Stash **creates the task immediately** — title "This is my task", tagged with the IOM
-context — with no clicks. The just-added task appears at the top of the list (live via Realtime
-if a window is already open) and a confirmation toast shows.
+The user can combine several contexts into one filter "view" and see the **intersection** of
+those contexts (a task shows only if it carries *every* selected context). The existing
+single-tap-to-switch behaviour is preserved. Long-pressing a context "pins" it so it persists
+across taps; a quick tap selects one context transiently. Any task captured while a view is
+active is auto-tagged with all contexts in that view.
 
-This is the desktop equivalent of the Android PWA share target, which desktop Chrome does not
-support. The launcher supplies the trigger; Stash supplies the behaviour.
+## Selection Model (canonical)
+State = a set of **sticky** contexts (any number) + at most one **transient** context.
 
-## Problem (root cause)
-The app already ingests share params (`readShared` in `Home.tsx`) but only **prefills** the
-capture bar — the user must still press Add. And `#tag → context` resolution only runs inside
-`CaptureBar.submit()`. There is no URL path that creates a task headlessly.
+- **Long press** a chip → toggles its sticky state (add if absent, remove if present).
+- **Quick press** a chip:
+  - If it's the current transient → clear the transient (toggle off).
+  - Else if it's sticky → un-stick it (remove from view); the transient is left untouched.
+  - Else → it becomes the transient, replacing the previous transient.
+- The transient is cleared only when a *new* selection is made (a quick tap on an unselected
+  context, or long-pressing a context into sticky). Removing a context (un-sticking it, or
+  tapping the transient off) never disturbs the rest. Only one transient can exist at a time.
+- **All** chip → clears everything (stickies + transient); shows all tasks.
+- **View** = intersection of `[...stickies, transient]`. Empty selection → all tasks (today's
+  "All" behaviour).
 
 ## In Scope
-- **New `?add=<text>` deeplink param** read on load in `Home.tsx`, distinct from the existing
-  `?title/?text/?url` prefill path (which stays unchanged).
-- **Tag resolution reuse**: lift the existing `parseTags` (`#context` → context id,
-  case-insensitive, unmatched left literal) into a shared `src/lib/tags.ts`; both `CaptureBar`
-  and the deeplink path use it. Behaviour identical to today.
-- **Headless create**: parse the text → if a non-empty title remains, create the task via the
-  existing optimistic store path. Whole text (minus matched tags) becomes the title; no note.
-- **Confirmation toast**: reuse the existing toast — "Added", with **Undo** that deletes the
-  just-created task (consistent with Completed/Deleted toasts).
-- **URL cleanup**: strip the query after processing via `history.replaceState`, same as
-  `readShared` does today.
-- **Fire-once + load-gated**: process only after the store has `loaded` (so contexts exist to
-  resolve `#iom`), and exactly once per page load.
+- Replace the single `Filter` value in `Home.tsx` with the sticky-set + transient model above.
+- `matchesFilter` becomes an intersection test over the selected context ids.
+- `FilterBar` chips gain: long-press detection (pointer events, ~500ms), a sticky vs transient
+  visual, and the new press semantics. "All" chip clears the selection.
+- **Sticky indicator**: a small filled dot on sticky chips. Transient chips keep the existing
+  accent fill only (no dot).
+- **Long-press input**: press-and-hold via pointer events (~500ms), one code path for touch and
+  mouse. Early move/release cancels (so the chip row still scrolls). Haptic feedback on trigger,
+  matching the existing complete-task haptics.
+- **Capture tagging**: every context in the current view (stickies + transient) is auto-applied
+  to a task added while that view is active. `CaptureBar` takes `activeContextIds: string[]`
+  instead of a single `activeContextId`, and reflects the current view.
 
 ## Out of Scope
-- Manifest/`share_target` changes. Desktop share-sheet integration is delivered separately via
-  an Apple Shortcut that opens the same `?add=` URL — no app change needed for that.
-- A headless script writing directly to Supabase (the no-browser route). Different trade-off
-  (key on disk); not this piece of work.
-- Preserving the add across sign-in. If signed out, the add is dropped (see Edge Cases).
-- Splitting title vs note, first-N-words title suggestion, or auto-creating contexts.
-- Any change to the offline queue, Realtime sync, swipe/undo, or existing share-target prefill.
+- Union ("any of") views — issue specifies intersection only.
+- Persisting the selected view across reloads (selection stays ephemeral component state, as
+  today).
+- Saving named views.
+- Changes to search, sort, completed section, ContextManager, store, or sync.
 - New dependencies.
 
 ## Key Flows
-- **Happy path**: launcher opens `…/Stash/?add=This%20is%20my%20task%20%23iom` → app loads,
-  store reaches `loaded` → read `add` → `parseTags` strips `#iom` to the IOM context id and
-  leaves title "This is my task" → `quickAddTask("This is my task", [iomId])` → task inserted
-  optimistically (Realtime syncs other devices), URL cleaned, "Added" toast shown.
-- **Multiple tags**: `?add=foo #iom #work` → both resolved and applied.
-- **Unknown tag**: `?add=foo #randomword` → `#randomword` stays literal in the title; task
-  titled "foo #randomword", no context. No context is created.
+- **Switch (unchanged)**: no stickies; tap A → view = A; tap B → view = B.
+- **Pin then add**: long-press A (A sticky, dot shown) → tap B (view = A ∩ B, B transient) →
+  tap C (view = A ∩ C, B dropped) → long-press C (C sticky, transient cleared, view = A ∩ C) →
+  tap B (view = A ∩ C ∩ B).
+- **Un-stick by tap**: A sticky → quick-tap A → A removed from view.
+- **Capture in view**: view = A ∩ B → add "foo" → task created tagged [A, B] (still editable via
+  the capture `#` tag panel before submit).
+- **All**: any selection → tap All → cleared, all tasks shown.
 
 ## Edge Cases and Error Handling
-- **Empty / tag-only add** (`?add=` empty, or only resolved tags leaving no title): no-op,
-  URL still cleaned, app opens normally. No empty task, no toast.
-- **Signed out**: `Home` only mounts when authed, so the deeplink path never runs on the Auth
-  screen; the magic-link redirect to `/Stash/` strips the query, so the add does not survive
-  sign-in. Net effect: dropped, by design.
-- **Contexts not yet loaded**: gated on `loaded`; processing waits so `#iom` resolves rather
-  than falling through to literal text.
-- **Double-fire** (re-render / effect re-run): guarded by a ref so it creates at most one task
-  per page load; URL cleanup is also idempotent.
-- **Undo**: tapping Undo on the "Added" toast deletes the created row through the normal
-  delete path (which itself shows a "Deleted" toast — accepted, consistent with the app).
+- Quick-press the current transient → toggles it off.
+- Quick-press a sticky chip → removes that sticky; the transient is left untouched.
+- Long-press the current transient → it becomes sticky, transient cleared.
+- Empty intersection → list shows the existing empty/no-match state.
+- A deleted context disappears from chips; if it was selected it simply drops out of the set.
+- Press-and-hold then scroll → movement cancels the long-press timer; treated as a scroll, not a
+  selection change.
 
 ## Tech Stack
-- React 18 + TypeScript, Vite, Tailwind (existing dark tokens).
-- Supabase JS v2 (existing optimistic store + Realtime).
-- Static PWA on GitHub Pages, base `/Stash/`. No new dependencies.
+- Language/Framework: React 18 + TypeScript, Vite, Tailwind.
+- Platform: mobile-first PWA, also used on desktop.
+- Deployment target: existing build (`tsc && vite build`).
+- Constraints: use existing patterns; no new dependencies.
 
 ## Non-Functional Requirements
 | Area | Requirement |
 |---|---|
-| Performance | Single optimistic insert; task visible instantly, no network wait. |
-| Security | Runs only inside the authenticated session; RLS unchanged. No secrets introduced. |
-| Scalability | N/A — one task per invocation. |
-| Resilience | Uses the existing offline queue; an add made offline flushes later like any task. |
-| Observability | N/A (personal app). Empty/invalid adds fail silently into a normal app open. |
-| Compliance | Unchanged. |
+| Performance | Pure client-side filter over already-loaded tasks; intersection test is O(tasks × selected). Negligible. |
+| Security | None — no new data paths. |
+| Scalability | n/a (local list). |
+| Resilience | n/a. |
+| Observability | n/a. |
+| Compliance | n/a. |
 
 ## Integration Points
 | Dependency | Protocol | Failure Mode |
 |---|---|---|
-| Launcher (jeebs/Raycast/Alfred) or Apple Shortcut | Opens an HTTPS URL with `?add=` | If URL not opened in the PWA window, opens a Chrome tab; task still created in-session. |
-| Existing optimistic store (`createTask`) | In-app function call | Offline → queued and flushed later; no special handling. |
+| `CaptureBar` | props (`activeContextIds`) | n/a — local prop |
+| `useStore` (tasks, contexts) | existing hook | unchanged |
 
 ## Domain Nomenclature
 | Term | Definition |
 |---|---|
-| Quick-capture deeplink | A `…/Stash/?add=<text>` URL that creates a task headlessly on load. |
-| `add` param | The query param carrying the raw capture text (title + inline `#tags`). |
-| Inline tag | A `#name` token in the text matching an existing context (case-insensitive). |
-| quickAddTask | Store function: create a task from title + context ids and show an "Added" toast. |
+| Sticky | A context pinned via long-press; persists in the view until toggled off. |
+| Transient | The single quick-tapped context; wiped when any other context is pressed. |
+| View | The active set of selected contexts; tasks shown = intersection of them. |
+| Selected | Union of stickies + the transient. |
 
 ## Open Risks / Unknowns
-- **PWA URL routing**: whether the URL opens in the standalone Stash window vs a Chrome tab
-  depends on Chrome's "open supported links in this app" setting. Task is created either way.
-  Flagged as a user-side setting, not a code risk.
-- **Signed-out drop**: accepted by decision. In practice the session persists, so rare.
+- None outstanding — all interaction decisions confirmed during the grill.
 
 ## Definition of Done
-- [ ] Opening `…/Stash/?add=This%20is%20my%20task%20%23iom` (signed in) creates a task titled
-      "This is my task" tagged IOM, with no clicks.
-- [ ] Unknown `#tag` stays literal; no context is created.
-- [ ] Empty / tag-only `add` creates nothing and opens the app normally.
-- [ ] "Added" toast appears with a working Undo that removes the task.
-- [ ] Processed once per load; URL query is stripped afterward.
-- [ ] Existing `?title/?text/?url` share-target prefill still works unchanged.
-- [ ] No new dependencies; `npm run build` (tsc + vite) passes.
+- [ ] Long-press toggles sticky; sticky chips show the dot indicator.
+- [ ] Quick-press follows the transient/un-stick rules above.
+- [ ] View shows the intersection of selected contexts; empty selection shows all.
+- [ ] "All" clears the selection.
+- [ ] Captured tasks are auto-tagged with all contexts in the current view.
+- [ ] Press-and-hold works on touch and mouse; scrolling the chip row is unaffected.
+- [ ] `tsc && vite build` passes.

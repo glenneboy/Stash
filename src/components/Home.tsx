@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Filter, Task } from '../types';
-import { ALL_FILTER } from '../types';
+import type { Task } from '../types';
 import { useStore } from '../lib/useStore';
 import { quickAddTask, clearCompleted } from '../lib/store';
 import { parseTags } from '../lib/tags';
@@ -12,9 +11,9 @@ import { EditSheet } from './EditSheet';
 import { ContextManager } from './ContextManager';
 import { Toast } from './Toast';
 
-function matchesFilter(task: Task, filter: Filter): boolean {
-  if (filter === ALL_FILTER) return true;
-  return task.contexts.includes(filter);
+/** Intersection: a task matches only if it carries every selected context. Empty = all. */
+function matchesSelection(task: Task, selected: string[]): boolean {
+  return selected.every((id) => task.contexts.includes(id));
 }
 
 function matchesQuery(task: Task, q: string): boolean {
@@ -53,7 +52,10 @@ function readShared(): { title: string; note: string } {
 
 export function Home() {
   const { tasks, contexts, online, syncing, pending, loaded } = useStore();
-  const [filter, setFilter] = useState<Filter>(ALL_FILTER);
+  // Filter view: any number of sticky contexts (long-pressed) plus at most one transient
+  // (quick-tapped). The visible list is the intersection of all selected contexts.
+  const [stickies, setStickies] = useState<string[]>([]);
+  const [transient, setTransient] = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
@@ -76,15 +78,38 @@ export function Home() {
     if (title) quickAddTask(title, tagIds);
   }, [loaded, contexts]);
 
+  const selected = useMemo(
+    () => (transient && !stickies.includes(transient) ? [...stickies, transient] : stickies),
+    [stickies, transient],
+  );
+
   const q = query.trim().toLowerCase();
   const visible = useMemo(
-    () => tasks.filter((t) => matchesFilter(t, filter) && matchesQuery(t, q)),
-    [tasks, filter, q],
+    () => tasks.filter((t) => matchesSelection(t, selected) && matchesQuery(t, q)),
+    [tasks, selected, q],
   );
   const active = useMemo(() => sortTasks(visible.filter((t) => !t.completed), activeSort), [visible, activeSort]);
   const completed = useMemo(() => sortTasks(visible.filter((t) => t.completed), completedSort), [visible, completedSort]);
 
-  const activeContextId = filter === ALL_FILTER ? null : filter;
+  // Quick tap: toggle the transient, un-stick a sticky (leaving the transient), or set a new
+  // transient. Selecting something new clears the previous transient; removing never does.
+  function quickPress(id: string) {
+    if (transient === id) setTransient(null);
+    else if (stickies.includes(id)) setStickies((s) => s.filter((x) => x !== id));
+    else setTransient(id);
+  }
+
+  // Long press: toggle sticky. Adding a sticky clears the transient; removing one leaves it.
+  function toggleSticky(id: string) {
+    const removing = stickies.includes(id);
+    setStickies((s) => (removing ? s.filter((x) => x !== id) : [...s, id]));
+    if (!removing) setTransient(null);
+  }
+
+  function clearSelection() {
+    setStickies([]);
+    setTransient(null);
+  }
 
   function toggleSearch() {
     setSearchOpen((open) => {
@@ -119,11 +144,19 @@ export function Home() {
 
       <CaptureBar
         contexts={contexts}
-        activeContextId={activeContextId}
+        activeContextIds={selected}
         initialTitle={shared.title}
         initialNote={shared.note}
       />
-      <FilterBar contexts={contexts} active={filter} onChange={setFilter} onManage={() => setManageOpen(true)} />
+      <FilterBar
+        contexts={contexts}
+        stickies={stickies}
+        transient={transient}
+        onQuickPress={quickPress}
+        onToggleSticky={toggleSticky}
+        onClear={clearSelection}
+        onManage={() => setManageOpen(true)}
+      />
 
       {searchOpen && (
         <div className="border-b border-line px-4 py-2">

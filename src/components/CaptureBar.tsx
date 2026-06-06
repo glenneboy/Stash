@@ -1,23 +1,27 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Context } from '../types';
 import { createTask } from '../lib/store';
 import { parseTags } from '../lib/tags';
 
 interface Props {
   contexts: Context[];
-  /** When a filter context is active, pre-tag new tasks with it. */
-  activeContextId: string | null;
+  /** Contexts in the active filter view; new tasks are pre-tagged with all of them. */
+  activeContextIds: string[];
   /** Text shared into the app via the PWA share target, used to prefill the input. */
   initialTitle?: string;
   /** Full shared detail, prefilled into the note (revealed when present). */
   initialNote?: string;
 }
 
-export function CaptureBar({ contexts, activeContextId, initialTitle = '', initialNote = '' }: Props) {
+export function CaptureBar({ contexts, activeContextIds, initialTitle = '', initialNote = '' }: Props) {
   const [title, setTitle] = useState(initialTitle);
   const [note, setNote] = useState(initialNote);
-  const [tags, setTags] = useState<string[]>(activeContextId ? [activeContextId] : []);
+  const [tags, setTags] = useState<string[]>(activeContextIds);
   const [showTags, setShowTags] = useState(false);
+
+  // Keep the pre-tagged contexts in step with the active filter view.
+  const seedKey = activeContextIds.join(',');
+  useEffect(() => setTags(activeContextIds), [seedKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggleTag(id: string) {
     setTags((t) => (t.includes(id) ? t.filter((x) => x !== id) : [...t, id]));
@@ -31,7 +35,7 @@ export function CaptureBar({ contexts, activeContextId, initialTitle = '', initi
     createTask(parsedTitle, merged, note);
     setTitle('');
     setNote('');
-    setTags(activeContextId ? [activeContextId] : []);
+    setTags(activeContextIds);
     setShowTags(false);
   }
 

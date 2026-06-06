@@ -26,7 +26,12 @@ export function EditSheet({ task, contexts, onClose }: Props) {
     updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags });
 
     const nextIso = reminder ? fromLocalInput(reminder) : null;
-    if (nextIso !== task.reminder_at) {
+    const reminderChanged =
+      nextIso === null || task.reminder_at === null
+        ? nextIso !== task.reminder_at
+        : new Date(nextIso).getTime() !== new Date(task.reminder_at).getTime();
+
+    if (reminderChanged) {
       if (nextIso) {
         setReminder(task.id, nextIso);
         const result = await ensurePushSubscription();
@@ -85,9 +90,10 @@ export function EditSheet({ task, contexts, onClose }: Props) {
         )}
 
         <div className="mt-3">
-          <label className="mb-1 block text-xs text-muted">Remind me</label>
+          <label htmlFor="reminder-input" className="mb-1 block text-xs text-muted">Remind me</label>
           <div className="flex items-center gap-2">
             <input
+              id="reminder-input"
               type="datetime-local"
               value={reminder}
               onChange={(e) => setReminderInput(e.target.value)}
@@ -105,7 +111,7 @@ export function EditSheet({ task, contexts, onClose }: Props) {
           </div>
           {notifyWarn && (
             <p className="mt-1.5 text-xs text-amber-400">
-              Notifications are off — reminder saved, but it won't alert until you allow notifications in your browser.
+              Notifications aren't set up — reminder saved, but it won't alert until notifications are allowed on this device.
             </p>
           )}
         </div>

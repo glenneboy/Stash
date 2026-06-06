@@ -78,6 +78,18 @@ export function Home() {
     if (title) quickAddTask(title, tagIds);
   }, [loaded, contexts]);
 
+  // Notification deep-link: `?task=<id>` opens that task's edit sheet once loaded.
+  const taskLinkHandled = useRef(false);
+  useEffect(() => {
+    if (taskLinkHandled.current || !loaded) return;
+    const id = new URLSearchParams(window.location.search).get('task');
+    taskLinkHandled.current = true;
+    if (!id) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    const t = tasks.find((x) => x.id === id);
+    if (t) setEditing(t);
+  }, [loaded, tasks]);
+
   const selected = useMemo(
     () => (transient && !stickies.includes(transient) ? [...stickies, transient] : stickies),
     [stickies, transient],

@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Context } from '../types';
 
 interface Props {
@@ -21,23 +21,73 @@ export function FilterBar({
   onManage,
 }: Props) {
   const nothingSelected = stickies.length === 0 && transient === null;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: false, right: false, selLeft: false, selRight: false });
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    function update() {
+      const c = scrollRef.current;
+      if (!c) return;
+      const eps = 1;
+      const cRect = c.getBoundingClientRect();
+      let selLeft = false;
+      let selRight = false;
+      c.querySelectorAll<HTMLElement>('[data-selected="true"]').forEach((chip) => {
+        const r = chip.getBoundingClientRect();
+        if (r.right <= cRect.left + eps) selLeft = true;
+        else if (r.left >= cRect.right - eps) selRight = true;
+      });
+      setEdges({
+        left: c.scrollLeft > eps,
+        right: c.scrollLeft + c.clientWidth < c.scrollWidth - eps,
+        selLeft,
+        selRight,
+      });
+    }
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', update);
+      ro.disconnect();
+    };
+  }, [contexts, stickies, transient]);
+
   return (
     <div className="flex items-center border-b border-line px-4 py-2">
       <div className="relative min-w-0 flex-1">
-        <div className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div
+          ref={scrollRef}
+          className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           <Chip label="All" active={nothingSelected} onTap={onClear} onLong={onClear} />
           {contexts.map((c) => (
             <Chip
               key={c.id}
               label={c.name}
               active={stickies.includes(c.id) || transient === c.id}
+              selected={stickies.includes(c.id) || transient === c.id}
               sticky={stickies.includes(c.id)}
               onTap={() => onQuickPress(c.id)}
               onLong={() => onToggleSticky(c.id)}
             />
           ))}
         </div>
-        <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-r from-transparent to-bg" />
+        {edges.left && (
+          <div className="pointer-events-none absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-bg to-transparent" />
+        )}
+        {edges.right && (
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-bg to-transparent" />
+        )}
+        {edges.selLeft && (
+          <span className="pointer-events-none absolute left-1 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-accent shadow-[0_0_8px_2px_rgba(240,101,58,0.7)]" />
+        )}
+        {edges.selRight && (
+          <span className="pointer-events-none absolute right-1 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-accent shadow-[0_0_8px_2px_rgba(240,101,58,0.7)]" />
+        )}
       </div>
       <button
         onClick={onManage}
@@ -59,12 +109,14 @@ const MOVE_CANCEL_PX = 10;
 function Chip({
   label,
   active,
+  selected = false,
   sticky = false,
   onTap,
   onLong,
 }: {
   label: string;
   active: boolean;
+  selected?: boolean;
   sticky?: boolean;
   onTap: () => void;
   onLong: () => void;
@@ -111,6 +163,7 @@ function Chip({
       onPointerLeave={clear}
       onPointerCancel={clear}
       onContextMenu={(e) => e.preventDefault()}
+      data-selected={selected}
       style={{ WebkitTouchCallout: 'none' }}
       className={`flex shrink-0 select-none items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition ${
         active ? 'bg-accent text-black' : 'bg-surface text-muted'

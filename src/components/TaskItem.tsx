@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Context, Task } from '../types';
 import { toggleComplete, deleteTask } from '../lib/store';
+import { hasReminder, isOverdue } from '../lib/reminders';
 
 interface Props {
   task: Task;
@@ -114,7 +115,22 @@ export function TaskItem({ task, contexts, onEdit }: Props) {
         </button>
 
         <button onClick={() => onEdit(task)} className="min-w-0 flex-1 text-left">
-          <p className={`break-words ${task.completed ? 'text-muted line-through' : ''}`}>{task.title}</p>
+          <p className={`flex items-center gap-1.5 break-words ${task.completed ? 'text-muted line-through' : ''}`}>
+            <span className="min-w-0">{task.title}</span>
+            {hasReminder(task) && (
+              <svg
+                viewBox="0 0 24 24"
+                aria-label="Reminder set"
+                className={`h-3.5 w-3.5 shrink-0 ${isOverdue(task) ? 'text-accent' : 'text-muted'}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M13.7 21a2 2 0 01-3.4 0" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </p>
           {task.note && <p className="mt-0.5 break-words text-sm text-muted">{task.note}</p>}
           {tags.length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1.5">

@@ -143,8 +143,18 @@ async function applyOp(op: Op): Promise<void> {
       break;
     }
     case 'task.update': {
-      const { error } = await supabase.from('tasks').update(op.patch).eq('id', op.id);
+      const { error, data } = await supabase
+        .from('tasks')
+        .update(op.patch)
+        .eq('id', op.id)
+        .select('id, reminder_at, user_id');
       if (error) throw error;
+      // TEMP — reveals whether RLS/user_id silently blocked the write (0 rows back = no-op).
+      const row = data?.[0];
+      logDebug(
+        `task.update ${op.id.slice(0, 8)} server rows=${data?.length ?? 0}` +
+          (row ? ` reminder_at=${row.reminder_at ?? 'null'} user_id=${row.user_id.slice(0, 8)}` : ''),
+      );
       break;
     }
     case 'task.delete': {

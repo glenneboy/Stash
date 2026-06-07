@@ -10,6 +10,7 @@ import { TaskItem } from './TaskItem';
 import { EditSheet } from './EditSheet';
 import { ContextManager } from './ContextManager';
 import { Toast } from './Toast';
+import { DebugPanel } from './DebugPanel';
 
 /** Intersection: a task matches only if it carries every selected context. Empty = all. */
 function matchesSelection(task: Task, selected: string[]): boolean {
@@ -237,6 +238,7 @@ export function Home() {
       )}
       {manageOpen && <ContextManager contexts={contexts} onClose={() => setManageOpen(false)} />}
       <Toast />
+      <DebugPanel />
     </div>
   );
 }

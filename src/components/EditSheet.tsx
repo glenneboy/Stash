@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Context, Task } from '../types';
 import { updateTask, deleteTask, setReminder, clearReminder } from '../lib/store';
 import { ensurePushSubscription } from '../lib/push';
@@ -16,6 +16,14 @@ export function EditSheet({ task, contexts, onClose }: Props) {
   const [tags, setTags] = useState<string[]>(task.contexts);
   const [reminder, setReminderInput] = useState(toLocalInput(task.reminder_at));
   const [notifyWarn, setNotifyWarn] = useState(false);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
 
   function toggleTag(id: string) {
     setTags((t) => (t.includes(id) ? t.filter((x) => x !== id) : [...t, id]));

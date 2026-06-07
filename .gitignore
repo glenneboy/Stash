@@ -7,3 +7,4 @@ dist-ssr
 *.log
 .DS_Store
 .vite
+supabase/.temp

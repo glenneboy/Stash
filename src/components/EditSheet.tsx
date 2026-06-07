@@ -114,13 +114,6 @@ export function EditSheet({ task, contexts, onClose }: Props) {
               Notifications aren't set up — reminder saved, but it won't alert until notifications are allowed on this device.
             </p>
           )}
-          {/* TEMP — raw reminder fields, remove once #12 persistence bug is found. */}
-          <pre className="mt-1.5 whitespace-pre-wrap rounded-lg border border-line bg-bg px-2 py-1.5 font-mono text-[10px] leading-tight text-muted">
-{`input value:    ${reminder || '(empty)'}
-task.reminder_at:    ${task.reminder_at ?? 'null'}
-task.notify_next_at: ${task.notify_next_at ?? 'null'}
-task.notify_stage:   ${task.notify_stage}`}
-          </pre>
         </div>
 
         <div className="mt-5 flex items-center gap-3">

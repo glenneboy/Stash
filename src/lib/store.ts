@@ -17,8 +17,6 @@ interface State {
   syncing: boolean;
   pending: number;
   toast: Toast | null;
-  // TEMP — reminder-sync debug trail; remove once #12 persistence bug is found.
-  debugLog: string[];
 }
 
 type Op =
@@ -46,15 +44,7 @@ let state: State = {
   syncing: false,
   pending: load<Op[]>(KEY.queue, []).length,
   toast: null,
-  debugLog: [],
 };
-
-// TEMP — visible trail of reminder-sync events (newest first), surfaced in DebugPanel.
-function logDebug(line: string): void {
-  const stamp = new Date().toISOString().slice(11, 19);
-  state = { ...state, debugLog: [`${stamp}  ${line}`, ...state.debugLog].slice(0, 30) };
-  listeners.forEach((fn) => fn());
-}
 
 const listeners = new Set<() => void>();
 
@@ -143,18 +133,8 @@ async function applyOp(op: Op): Promise<void> {
       break;
     }
     case 'task.update': {
-      const { error, data } = await supabase
-        .from('tasks')
-        .update(op.patch)
-        .eq('id', op.id)
-        .select('id, reminder_at, user_id');
+      const { error } = await supabase.from('tasks').update(op.patch).eq('id', op.id);
       if (error) throw error;
-      // TEMP — reveals whether RLS/user_id silently blocked the write (0 rows back = no-op).
-      const row = data?.[0];
-      logDebug(
-        `task.update ${op.id.slice(0, 8)} server rows=${data?.length ?? 0}` +
-          (row ? ` reminder_at=${row.reminder_at ?? 'null'} user_id=${row.user_id.slice(0, 8)}` : ''),
-      );
       break;
     }
     case 'task.delete': {
@@ -198,13 +178,8 @@ export async function flush(): Promise<void> {
       writeQueue(readQueue().slice(1));
       queue = readQueue();
     }
-  } catch (err) {
+  } catch {
     // Stop on first failure; remaining ops stay queued for the next attempt.
-    const queue = readQueue();
-    const op = queue[0];
-    const opDesc = op ? `${op.kind} ${'id' in op ? op.id.slice(0, 8) : op.row.id.slice(0, 8)}` : '?';
-    const message = err instanceof Error ? err.message : String(err);
-    logDebug(`flush FAILED on ${opDesc}: ${message}`);
   } finally {
     flushing = false;
     set({ syncing: false });
@@ -214,19 +189,12 @@ export async function flush(): Promise<void> {
 // ── Server fetch + reconcile ─────────────────────────────────
 async function fetchAll(): Promise<void> {
   if (!navigator.onLine) return;
-  logDebug('fetchAll start');
   const [tasksRes, ctxRes] = await Promise.all([
     supabase.from('tasks').select('*').order('created_at', { ascending: false }),
     supabase.from('contexts').select('*').order('created_at', { ascending: true }),
   ]);
   if (!tasksRes.error && tasksRes.data) {
     const incoming = tasksRes.data as Task[];
-    const guarded = incoming.filter((t) => hasPendingForRow(t.id));
-    if (guarded.length > 0) {
-      logDebug(
-        `fetchAll keeping local for pending rows: ${guarded.map((t) => `${t.id.slice(0, 8)} (server reminder_at=${t.reminder_at ?? 'null'})`).join(', ')}`,
-      );
-    }
     // Rows with unflushed local writes keep their optimistic copy — the server snapshot
     // may predate the queued op and would otherwise clobber the pending change.
     const merged = incoming.map((t) => {
@@ -346,7 +314,7 @@ export function reset(): void {
   localStorage.removeItem(KEY.tasks);
   localStorage.removeItem(KEY.contexts);
   localStorage.removeItem(KEY.queue);
-  state = { tasks: [], contexts: [], loaded: false, online: navigator.onLine, syncing: false, pending: 0, toast: null, debugLog: [] };
+  state = { tasks: [], contexts: [], loaded: false, online: navigator.onLine, syncing: false, pending: 0, toast: null };
   listeners.forEach((fn) => fn());
 }
 
@@ -383,7 +351,6 @@ export function updateTask(id: string, patch: Partial<Pick<Task, 'title' | 'note
 // Set/replace a one-off reminder. Resets the nudge schedule to stage 0 at the new time.
 export function setReminder(id: string, reminderAt: string): void {
   const patch: Partial<Task> = { reminder_at: reminderAt, notify_next_at: reminderAt, notify_stage: 0 };
-  logDebug(`setReminder ${id.slice(0, 8)} → ${reminderAt}`);
   setTasks(state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   enqueue({ kind: 'task.update', id, patch });
 }
@@ -391,7 +358,6 @@ export function setReminder(id: string, reminderAt: string): void {
 // Remove a reminder and cancel any pending nudges.
 export function clearReminder(id: string): void {
   const patch: Partial<Task> = { reminder_at: null, notify_next_at: null, notify_stage: 0 };
-  logDebug(`clearReminder ${id.slice(0, 8)}`);
   setTasks(state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   enqueue({ kind: 'task.update', id, patch });
 }

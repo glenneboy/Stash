@@ -184,19 +184,23 @@ let flushing = false;
 
 export async function flush(): Promise<void> {
   if (flushing || !navigator.onLine) return;
-  let queue = readQueue();
-  if (queue.length === 0) return;
+  if (readQueue().length === 0) return;
 
   flushing = true;
   set({ syncing: true });
   try {
+    // Re-read on every iteration: ops can be appended mid-flush (e.g. EditSheet's save
+    // enqueues an updateTask then a setReminder back to back), and writing back a stale
+    // snapshot would silently drop anything appended after it was taken.
+    let queue = readQueue();
     while (queue.length > 0) {
       await applyOp(queue[0]);
-      queue = queue.slice(1);
-      writeQueue(queue);
+      writeQueue(readQueue().slice(1));
+      queue = readQueue();
     }
   } catch (err) {
     // Stop on first failure; remaining ops stay queued for the next attempt.
+    const queue = readQueue();
     const op = queue[0];
     const opDesc = op ? `${op.kind} ${'id' in op ? op.id.slice(0, 8) : op.row.id.slice(0, 8)}` : '?';
     const message = err instanceof Error ? err.message : String(err);

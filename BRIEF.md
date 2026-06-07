@@ -1,108 +1,174 @@
-# Engineering Brief — Multi-Context Select (Sticky + Transient Views)
-
-_GitHub issue #6 (glenneboy/Stash)._
+# Engineering Brief — Task Reminders (Scheduled Web Push)
 
 ## Outcome
-The user can combine several contexts into one filter "view" and see the **intersection** of
-those contexts (a task shows only if it carries *every* selected context). The existing
-single-tap-to-switch behaviour is preserved. Long-pressing a context "pins" it so it persists
-across taps; a quick tap selects one context transiently. Any task captured while a view is
-active is auto-tagged with all contexts in that view.
+A user can set a one-off reminder (date + time) on a task. At that moment their device shows a
+notification with the task title — **even when the app is closed** — via Web Push. If the
+reminder time passes and the task is still not completed, the user is **nudged** on an
+escalating schedule until they either complete it or the schedule is exhausted. Notifications
+fire across **all** the user's subscribed devices and respect the **device's** silent/DnD mode.
 
-## Selection Model (canonical)
-State = a set of **sticky** contexts (any number) + at most one **transient** context.
-
-- **Long press** a chip → toggles its sticky state (add if absent, remove if present).
-- **Quick press** a chip:
-  - If it's the current transient → clear the transient (toggle off).
-  - Else if it's sticky → un-stick it (remove from view); the transient is left untouched.
-  - Else → it becomes the transient, replacing the previous transient.
-- The transient is cleared only when a *new* selection is made (a quick tap on an unselected
-  context, or long-pressing a context into sticky). Removing a context (un-sticking it, or
-  tapping the transient off) never disturbs the rest. Only one transient can exist at a time.
-- **All** chip → clears everything (stickies + transient); shows all tasks.
-- **View** = intersection of `[...stickies, transient]`. Empty selection → all tasks (today's
-  "All" behaviour).
+## Users / devices
+- Primary user on **Android** (phone) and **macOS** (MacBook), signed in on both.
+- iOS is supported only as an **installed (home-screen) PWA** — accepted caveat, not a target to
+  optimise for.
 
 ## In Scope
-- Replace the single `Filter` value in `Home.tsx` with the sticky-set + transient model above.
-- `matchesFilter` becomes an intersection test over the selected context ids.
-- `FilterBar` chips gain: long-press detection (pointer events, ~500ms), a sticky vs transient
-  visual, and the new press semantics. "All" chip clears the selection.
-- **Sticky indicator**: a small filled dot on sticky chips. Transient chips keep the existing
-  accent fill only (no dot).
-- **Long-press input**: press-and-hold via pointer events (~500ms), one code path for touch and
-  mouse. Early move/release cancels (so the chip row still scrolls). Haptic feedback on trigger,
-  matching the existing complete-task haptics.
-- **Capture tagging**: every context in the current view (stickies + transient) is auto-applied
-  to a task added while that view is active. `CaptureBar` takes `activeContextIds: string[]`
-  instead of a single `activeContextId`, and reflects the current view.
+- New task field **`reminder_at`** (a single absolute instant; date + time).
+- **Notification permission + push subscription** flow, triggered the first time a user sets a
+  reminder. No reminder = no permission ask.
+- **Service worker push handling**: show the notification on `push`; on `notificationclick`,
+  focus/open the app deep-linked to that task.
+- **Escalating nudge schedule** for overdue, incomplete tasks (see below).
+- **Edge Function on a `pg_cron` schedule** (every minute) that finds due reminders/nudges and
+  sends Web Push to all of the user's subscriptions.
+- **Subtle bell/time badge** on `TaskItem` for tasks with a pending reminder.
+- Setting the reminder lives in the existing **`EditSheet`**, using a native
+  `<input type="datetime-local">`.
 
-## Out of Scope
-- Union ("any of") views — issue specifies intersection only.
-- Persisting the selected view across reloads (selection stays ephemeral component state, as
-  today).
-- Saving named views.
-- Changes to search, sort, completed section, ContextManager, store, or sync.
-- New dependencies.
+## Out of Scope (deferred / not building)
+- **Inline notification actions** (Complete / Snooze on the notification) — **v2**. MVP is
+  **tap-to-open** only.
+- **Recurring reminders** — one-off only for now.
+- **Server-side quiet hours** — device silent/DnD mode handles silencing.
+- **Snooze.**
+- Per-device targeting (we fan out to all devices; revisit later if noisy).
+- Daily digest / stale-task sweeps unrelated to a set reminder.
+- Re-interpreting a reminder to a new timezone if the user travels between setting and firing.
+
+## Escalating Nudge Schedule (canonical)
+Stages are computed as offsets from the original `reminder_at`. Each fires only if the task is
+still **incomplete** at that time:
+
+| Stage | When | Offset from `reminder_at` |
+|---|---|---|
+| 0 | On time | +0 |
+| 1 | An hour later | +1 hour |
+| 2 | The next day | +1 day |
+| 3 | Three days after stage 2 | +4 days |
+| 4 | A week after stage 3 | +11 days |
+| — | Gives up | no further notifications |
+
+> **Confirm interpretation:** the gaps are cumulative ("an hour after → the next day → 3 days
+> later → 1 week later"), giving offsets **+1h, +1d, +4d, +11d**. If you meant the later gaps to
+> be measured from `reminder_at` instead (+1h, +1d, +3d, +7d), say so before sign-off.
+
+Completing the task at any point stops all further nudges. Changing the reminder resets the
+schedule to stage 0 at the new time.
 
 ## Key Flows
-- **Switch (unchanged)**: no stickies; tap A → view = A; tap B → view = B.
-- **Pin then add**: long-press A (A sticky, dot shown) → tap B (view = A ∩ B, B transient) →
-  tap C (view = A ∩ C, B dropped) → long-press C (C sticky, transient cleared, view = A ∩ C) →
-  tap B (view = A ∩ C ∩ B).
-- **Un-stick by tap**: A sticky → quick-tap A → A removed from view.
-- **Capture in view**: view = A ∩ B → add "foo" → task created tagged [A, B] (still editable via
-  the capture `#` tag panel before submit).
-- **All**: any selection → tap All → cleared, all tasks shown.
+- **Set a reminder**: open task in `EditSheet` → pick date+time → save. First time ever:
+  browser prompts for notification permission; on grant, the device subscribes to push and the
+  subscription is stored. The task shows the bell badge.
+- **Fire on time**: cron sees `reminder_at` due, task incomplete → pushes to all devices →
+  notification shows the task title. Tapping it opens the app focused on that task.
+- **Nudge**: task still incomplete at +1h → push again; repeat per schedule until completed or
+  exhausted.
+- **Change reminder**: pick a new time → old schedule discarded, new schedule starts at the new
+  time (auto-cancel + replace).
+- **Remove reminder**: clear the field → no further notifications; badge disappears.
+- **Complete the task**: any pending/overdue schedule stops immediately.
 
 ## Edge Cases and Error Handling
-- Quick-press the current transient → toggles it off.
-- Quick-press a sticky chip → removes that sticky; the transient is left untouched.
-- Long-press the current transient → it becomes sticky, transient cleared.
-- Empty intersection → list shows the existing empty/no-match state.
-- A deleted context disappears from chips; if it was selected it simply drops out of the set.
-- Press-and-hold then scroll → movement cancels the long-press timer; treated as a scroll, not a
-  selection change.
+- **Permission denied/blocked**: reminder is still saved, but the app surfaces that
+  notifications are off and it won't fire until permission is granted.
+- **Subscription expired/invalid** (push service returns 404/410): delete that subscription row;
+  remaining devices still receive the push.
+- **Task completed before a stage fires**: cron skips completed tasks; the schedule is cleared.
+- **Task deleted**: reminder/schedule goes with it (FK cascade).
+- **Multiple devices, some unsubscribed**: fan out to whatever subscriptions exist.
+- **Device in silent/DnD**: notification still delivered, silenced by the OS (intended).
+- **Reminder set in the past**: fires on the next cron tick (treated as immediately due).
 
 ## Tech Stack
-- Language/Framework: React 18 + TypeScript, Vite, Tailwind.
-- Platform: mobile-first PWA, also used on desktop.
-- Deployment target: existing build (`tsc && vite build`).
-- Constraints: use existing patterns; no new dependencies.
+- Language/Framework: React 18 + TypeScript, Vite, Tailwind (existing).
+- Backend: Supabase (Postgres + RLS + Auth + Realtime), existing.
+- PWA: `vite-plugin-pwa` — **switch from generated SW to `injectManifest`** so we can own a
+  custom service worker for `push` / `notificationclick`.
+- Scheduler: **`pg_cron`** (Supabase) invoking a Supabase **Edge Function** (Deno) every minute.
+- Deployment target: existing `tsc && vite build`; Edge Function + cron deployed to Supabase.
+
+## New Dependencies (require approval per project rules)
+- **Server-side only**: a Web Push library in the Edge Function (Deno-compatible, e.g.
+  `web-push`) to sign/send pushes with VAPID. Lives in the function, **not** the client bundle.
+- **Client-side**: none expected — push subscription uses native browser APIs plus the existing
+  service worker. (Flag if any helper proves necessary.)
+
+## Data Model Changes
+- `tasks`: add `reminder_at timestamptz null`, plus internal scheduling fields
+  `notify_next_at timestamptz null` and `notify_stage int not null default 0`.
+- New table `push_subscriptions` (`user_id`, `endpoint` unique, `p256dh`, `auth`, `created_at`)
+  with RLS scoped to `auth.uid()`, mirroring the existing own-rows policies.
+- VAPID public/private keys stored as Edge Function secrets; public key shipped to the client
+  for `pushManager.subscribe`.
 
 ## Non-Functional Requirements
 | Area | Requirement |
 |---|---|
-| Performance | Pure client-side filter over already-loaded tasks; intersection test is O(tasks × selected). Negligible. |
-| Security | None — no new data paths. |
-| Scalability | n/a (local list). |
-| Resilience | n/a. |
-| Observability | n/a. |
-| Compliance | n/a. |
+| Performance | Cron query is an indexed lookup on `notify_next_at <= now()` where incomplete; tiny volume. |
+| Security | See **Security Model** below. End-to-end encrypted payloads (RFC 8291); VAPID-restricted sends; RLS on `push_subscriptions`; secrets only in Edge Function env; authenticated cron→function trigger; dead-subscription pruning. |
+| Scalability | Single-user scale; per-minute cron is ample. |
+| Resilience | Invalid subscriptions pruned on send failure; missed ticks self-heal (next tick re-queries due rows). |
+| Observability | Edge Function logs sends, failures, and pruned subscriptions. |
+| Compliance | No new sensitive data beyond push endpoints; cascade-deleted with the user. |
+
+## Security Model
+Standard Web Push security; secure provided the following are enforced (all in scope):
+
+**Strong by design**
+- **End-to-end encrypted payloads** (RFC 8291, via the `web-push` lib): the push service relays
+  ciphertext only and cannot read the task title. Decryptable solely by the subscribed browser.
+- **VAPID-restricted sends**: subscriptions are bound to our public key; the push service rejects
+  any push not signed by our matching **private** key. A leaked endpoint alone cannot be used to
+  notify the user.
+- **Endpoints are write-only** delivery addresses — they expose no read access to user data.
+
+**Enforced controls (build requirements)**
+1. VAPID **private** key + Supabase **service-role** key live only in Edge Function secrets —
+   never in the client bundle or git. VAPID **public** key is shipped to the client (intended).
+2. **RLS** on `push_subscriptions` scoped to `auth.uid()`.
+3. **Authenticated** cron→Edge-Function trigger (service role / shared secret verified in the
+   function) — no open endpoint that can spoof or fan out sends.
+4. **Prune** subscriptions on push 404/410.
+
+**Accepted residual risks (inherent to Web Push)**
+- Push service sees metadata (endpoint, timing, size) — never content.
+- Task title is visible on the lock screen (generic-text toggle is a possible v2, out of scope).
+- Theft of the VAPID private key would allow spoofed notifications *to* the user (not data
+  access); mitigated by secret storage and rotation if leaked.
 
 ## Integration Points
 | Dependency | Protocol | Failure Mode |
 |---|---|---|
-| `CaptureBar` | props (`activeContextIds`) | n/a — local prop |
-| `useStore` (tasks, contexts) | existing hook | unchanged |
+| Web Push services (FCM/Mozilla/Apple) | Web Push protocol (VAPID) | 4xx → prune subscription; transient 5xx → retried next tick |
+| Supabase `pg_cron` | scheduled SQL → Edge Function HTTP | missed tick recovered on next run |
+| Browser Push/Notification APIs | native | permission denied → reminder saved but inert, user told |
 
 ## Domain Nomenclature
 | Term | Definition |
 |---|---|
-| Sticky | A context pinned via long-press; persists in the view until toggled off. |
-| Transient | The single quick-tapped context; wiped when any other context is pressed. |
-| View | The active set of selected contexts; tasks shown = intersection of them. |
-| Selected | Union of stickies + the transient. |
+| Reminder | The user-set instant (`reminder_at`) a task should first notify. |
+| Nudge | A follow-up notification for an overdue, still-incomplete task. |
+| Stage | Position in the escalating nudge schedule (0 = on time). |
+| Subscription | A device's Web Push registration stored in `push_subscriptions`. |
+| Fire | The act of delivering a push for a due reminder/nudge. |
 
 ## Open Risks / Unknowns
-- None outstanding — all interaction decisions confirmed during the grill.
+- **Nudge gap interpretation** (cumulative vs from-`reminder_at`) — to confirm at sign-off.
+- **Edge Function ↔ cron auth** specifics (service-role vs signed invocation) — finalise in
+  implementation; doesn't change scope.
+- **`injectManifest` migration**: must verify the existing offline/precache behaviour from
+  `vite-plugin-pwa` is preserved after taking over the service worker.
 
 ## Definition of Done
-- [ ] Long-press toggles sticky; sticky chips show the dot indicator.
-- [ ] Quick-press follows the transient/un-stick rules above.
-- [ ] View shows the intersection of selected contexts; empty selection shows all.
-- [ ] "All" clears the selection.
-- [ ] Captured tasks are auto-tagged with all contexts in the current view.
-- [ ] Press-and-hold works on touch and mouse; scrolling the chip row is unaffected.
-- [ ] `tsc && vite build` passes.
+- [ ] `reminder_at` settable/clearable on a task via `EditSheet` (native datetime picker).
+- [ ] First reminder triggers the permission prompt; granting stores a push subscription.
+- [ ] Permission-denied path saves the reminder but tells the user it won't fire.
+- [ ] On-time notification shows the task title with app closed; tap opens app on that task.
+- [ ] Escalating nudges fire per the confirmed schedule and stop on completion/removal.
+- [ ] Changing a reminder cancels the old schedule and starts a new one.
+- [ ] Notifications fan out to all of the user's devices; invalid subscriptions are pruned.
+- [ ] Subtle bell/time badge on `TaskItem` for tasks with a pending reminder.
+- [ ] `pg_cron` + Edge Function deployed and verified end-to-end.
+- [ ] Security controls 1–4 (Security Model) enforced: secrets out of client/git, RLS on
+      `push_subscriptions`, authenticated cron trigger, dead-subscription pruning.
+- [ ] `tsc && vite build` passes; existing PWA offline behaviour intact after SW migration.

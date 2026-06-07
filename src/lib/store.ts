@@ -207,13 +207,19 @@ async function fetchAll(): Promise<void> {
   ]);
   if (!tasksRes.error && tasksRes.data) {
     const incoming = tasksRes.data as Task[];
-    const clobbered = incoming.filter((t) => hasPendingForRow(t.id));
-    if (clobbered.length > 0) {
+    const guarded = incoming.filter((t) => hasPendingForRow(t.id));
+    if (guarded.length > 0) {
       logDebug(
-        `fetchAll CLOBBER risk: ${clobbered.map((t) => `${t.id.slice(0, 8)} (server reminder_at=${t.reminder_at ?? 'null'})`).join(', ')}`,
+        `fetchAll keeping local for pending rows: ${guarded.map((t) => `${t.id.slice(0, 8)} (server reminder_at=${t.reminder_at ?? 'null'})`).join(', ')}`,
       );
     }
-    setTasks(incoming);
+    // Rows with unflushed local writes keep their optimistic copy — the server snapshot
+    // may predate the queued op and would otherwise clobber the pending change.
+    const merged = incoming.map((t) => {
+      if (!hasPendingForRow(t.id)) return t;
+      return state.tasks.find((local) => local.id === t.id) ?? t;
+    });
+    setTasks(merged);
   }
   if (!ctxRes.error && ctxRes.data) setContexts(ctxRes.data as Context[]);
 }

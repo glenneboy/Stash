@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 
+const isIOSBrowser =
+  (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent))) &&
+  !(navigator as any).standalone &&
+  !window.matchMedia('(display-mode: standalone)').matches;
+
 export function Auth() {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
@@ -35,6 +41,11 @@ export function Auth() {
             <p className="text-sm">
               Check <span className="text-accent">{email}</span> for a magic link to sign in.
             </p>
+            {isIOSBrowser && (
+              <p className="mt-3 text-xs text-muted">
+                The link will open in Safari — after signing in, return to Stash on your home screen.
+              </p>
+            )}
             <button
               className="mt-4 text-xs text-muted underline"
               onClick={() => setStatus('idle')}

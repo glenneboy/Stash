@@ -74,19 +74,28 @@ export function FilterBar({
           ref={scrollRef}
           className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {[...contexts]
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((c) => (
-            <Chip
-              key={c.id}
-              label={c.name}
-              active={stickies.includes(c.id) || transient === c.id}
-              selected={stickies.includes(c.id) || transient === c.id}
-              sticky={stickies.includes(c.id)}
-              onTap={() => onQuickPress(c.id)}
-              onLong={() => onToggleSticky(c.id)}
-            />
-            ))}
+          {contexts.length === 0 ? (
+            <button
+              onClick={onManage}
+              className="flex shrink-0 select-none items-center gap-1.5 rounded-full border border-dashed border-line px-4 py-1.5 text-sm font-medium text-muted"
+            >
+              <span className="text-accent">+</span> Create your first tag
+            </button>
+          ) : (
+            [...contexts]
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((c) => (
+              <Chip
+                key={c.id}
+                label={c.name}
+                active={stickies.includes(c.id) || transient === c.id}
+                selected={stickies.includes(c.id) || transient === c.id}
+                sticky={stickies.includes(c.id)}
+                onTap={() => onQuickPress(c.id)}
+                onLong={() => onToggleSticky(c.id)}
+              />
+              ))
+          )}
         </div>
         {edges.left && (
           <div className="pointer-events-none absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-bg to-transparent" />

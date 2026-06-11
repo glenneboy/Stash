@@ -37,7 +37,7 @@ export function Auth() {
 
   async function verifyCode(e: React.FormEvent) {
     e.preventDefault();
-    if (otp.length !== 6) return;
+    if (otp.length !== 8) return;
     setOtpStatus('verifying');
     const { error } = await supabase.auth.verifyOtp({
       email,
@@ -63,7 +63,7 @@ export function Auth() {
               </p>
               {isIOSBrowser && (
                 <p className="mt-3 text-xs text-muted">
-                  Enter the 6-digit code from the email below — don't tap the link.
+                  Enter the 8-digit code from the email below — don't tap the link.
                 </p>
               )}
               <button
@@ -80,18 +80,18 @@ export function Auth() {
                   type="text"
                   inputMode="numeric"
                   autoComplete="one-time-code"
-                  maxLength={6}
-                  placeholder="000000"
+                  maxLength={8}
+                  placeholder="00000000"
                   value={otp}
                   onChange={(e) => {
-                    setOtp(e.target.value.replace(/\D/g, '').slice(0, 6));
+                    setOtp(e.target.value.replace(/\D/g, '').slice(0, 8));
                     setOtpStatus('idle');
                   }}
                   className="w-full rounded-xl border border-line bg-surface px-4 py-3 text-center text-2xl tracking-[0.5em] outline-none placeholder:text-muted focus:border-accent"
                 />
                 <button
                   type="submit"
-                  disabled={otp.length !== 6 || otpStatus === 'verifying'}
+                  disabled={otp.length !== 8 || otpStatus === 'verifying'}
                   className="w-full rounded-xl bg-accent px-4 py-3 font-medium text-black transition active:scale-[0.99] disabled:opacity-60"
                 >
                   {otpStatus === 'verifying' ? 'Verifying…' : 'Sign in with code'}

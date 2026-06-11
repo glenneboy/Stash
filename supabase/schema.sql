@@ -2,8 +2,8 @@
 -- Run this in the Supabase SQL editor for your new project.
 
 -- ── Contexts ────────────────────────────────────────────────
--- Tags that group tasks by life area (IOM, Work, Home, Personal).
--- User-editable; the app seeds the four defaults on first login.
+-- Tags that group tasks by life area. User-editable; new users start
+-- with no contexts and create their own.
 create table if not exists public.contexts (
   id         uuid primary key default gen_random_uuid(),
   user_id    uuid not null references auth.users (id) on delete cascade default auth.uid(),

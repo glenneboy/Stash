@@ -27,8 +27,6 @@ type Op =
   | { kind: 'context.update'; id: string; patch: Partial<Context> }
   | { kind: 'context.delete'; id: string };
 
-const DEFAULT_CONTEXTS = ['IOM', 'Work', 'Home', 'Personal'];
-
 const KEY = {
   tasks: 'stash.tasks',
   contexts: 'stash.contexts',
@@ -277,23 +275,10 @@ function teardownRealtime(): void {
   }
 }
 
-async function seedDefaultsIfEmpty(): Promise<void> {
-  if (state.contexts.length > 0 || readQueue().length > 0) return;
-  const now = new Date().toISOString();
-  const rows: Context[] = DEFAULT_CONTEXTS.map((name) => ({
-    id: crypto.randomUUID(),
-    name,
-    created_at: now,
-  }));
-  setContexts(rows);
-  rows.forEach((row) => enqueue({ kind: 'context.insert', row }));
-}
-
 export async function init(): Promise<void> {
   set({ online: navigator.onLine });
   await flush();
   await fetchAll();
-  await seedDefaultsIfEmpty();
   await subscribeRealtime();
   set({ loaded: true });
 

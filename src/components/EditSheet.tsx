@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Context, Task } from '../types';
-import { updateTask, deleteTask, setReminder, clearReminder } from '../lib/store';
+import { updateTask, deleteTask, setReminder, clearReminder, toggleComplete } from '../lib/store';
 import { ensurePushSubscription } from '../lib/push';
 import { toLocalInput, fromLocalInput } from '../lib/reminders';
 
@@ -59,6 +59,15 @@ export function EditSheet({ task, contexts, onClose }: Props) {
     onClose();
   }
 
+  // Completing from the sheet keeps any unsaved edits, then closes.
+  function complete() {
+    if (title.trim()) {
+      updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags });
+    }
+    toggleComplete(task.id);
+    onClose();
+  }
+
   return (
     <div className="fixed inset-0 z-20 flex flex-col justify-end bg-black/60" onClick={onClose}>
       <div
@@ -67,12 +76,27 @@ export function EditSheet({ task, contexts, onClose }: Props) {
       >
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-line" />
 
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Title"
-          className="w-full rounded-xl border border-line bg-bg px-4 py-3 text-base outline-none focus:border-accent"
-        />
+        <div className="flex items-center gap-3">
+          <button
+            aria-label={task.completed ? 'Mark incomplete' : 'Mark complete'}
+            onClick={complete}
+            className={`grid h-7 w-7 shrink-0 place-items-center rounded-full border-2 transition ${
+              task.completed ? 'border-accent bg-accent text-black' : 'border-muted'
+            }`}
+          >
+            {task.completed && (
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="3">
+                <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </button>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Title"
+            className="min-w-0 flex-1 rounded-xl border border-line bg-bg px-4 py-3 text-base outline-none focus:border-accent"
+          />
+        </div>
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}

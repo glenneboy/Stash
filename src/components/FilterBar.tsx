@@ -82,9 +82,7 @@ export function FilterBar({
               <span className="text-accent">+</span> Create your first tag
             </button>
           ) : (
-            [...contexts]
-              .sort((a, b) => a.name.localeCompare(b.name))
-              .map((c) => (
+            contexts.map((c) => (
               <Chip
                 key={c.id}
                 label={c.name}

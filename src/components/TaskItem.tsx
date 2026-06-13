@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Context, Task } from '../types';
 import { toggleComplete, deleteTask } from '../lib/store';
 import { hasReminder, isOverdue } from '../lib/reminders';
+import { dueInfo } from '../lib/due';
 
 interface Props {
   task: Task;
@@ -15,6 +16,8 @@ export function TaskItem({ task, contexts, onEdit }: Props) {
   const tags = task.contexts
     .map((id) => contexts.find((c) => c.id === id)?.name)
     .filter((n): n is string => Boolean(n));
+
+  const due = dueInfo(task);
 
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number } | null>(null);
@@ -132,8 +135,22 @@ export function TaskItem({ task, contexts, onEdit }: Props) {
             )}
           </p>
           {task.note && <p className="mt-0.5 break-words text-sm text-muted">{task.note}</p>}
-          {tags.length > 0 && (
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {(due || tags.length > 0) && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {due && (
+                <span className={`inline-flex items-center gap-1 text-xs font-medium ${due.className}`}>
+                  {due.alert ? (
+                    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M10.3 3.9 1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M12 9v4" strokeLinecap="round" />
+                      <path d="M12 17h.01" strokeLinecap="round" />
+                    </svg>
+                  ) : (
+                    <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+                  )}
+                  <span>{due.label}</span>
+                </span>
+              )}
               {tags.map((name) => (
                 <span key={name} className="rounded-full bg-elevated px-2 py-0.5 text-xs text-muted">
                   {name}

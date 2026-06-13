@@ -14,6 +14,7 @@ export function EditSheet({ task, contexts, onClose }: Props) {
   const [title, setTitle] = useState(task.title);
   const [note, setNote] = useState(task.note ?? '');
   const [tags, setTags] = useState<string[]>(task.contexts);
+  const [due, setDue] = useState(task.due_on ?? '');
   const [reminder, setReminderInput] = useState(toLocalInput(task.reminder_at));
   const [notifyWarn, setNotifyWarn] = useState(false);
 
@@ -31,7 +32,7 @@ export function EditSheet({ task, contexts, onClose }: Props) {
 
   async function save() {
     if (!title.trim()) return;
-    updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags });
+    updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags, due_on: due || null });
 
     const nextIso = reminder ? fromLocalInput(reminder) : null;
     const reminderChanged =
@@ -62,7 +63,7 @@ export function EditSheet({ task, contexts, onClose }: Props) {
   // Completing from the sheet keeps any unsaved edits, then closes.
   function complete() {
     if (title.trim()) {
-      updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags });
+      updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags, due_on: due || null });
     }
     toggleComplete(task.id);
     onClose();
@@ -120,6 +121,28 @@ export function EditSheet({ task, contexts, onClose }: Props) {
             ))}
           </div>
         )}
+
+        <div className="mt-3">
+          <label htmlFor="due-input" className="mb-1 block text-xs text-muted">Due date</label>
+          <div className="flex items-center gap-2">
+            <input
+              id="due-input"
+              type="date"
+              value={due}
+              onChange={(e) => setDue(e.target.value)}
+              className="flex-1 rounded-xl border border-line bg-bg px-4 py-3 text-base outline-none focus:border-accent"
+            />
+            {due && (
+              <button
+                onClick={() => setDue('')}
+                aria-label="Clear due date"
+                className="rounded-xl border border-line px-3 py-3 text-sm text-muted"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
 
         <div className="mt-3">
           <label htmlFor="reminder-input" className="mb-1 block text-xs text-muted">Remind me</label>

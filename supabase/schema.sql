@@ -24,11 +24,15 @@ create table if not exists public.tasks (
   contexts     uuid[] not null default '{}',
   completed    boolean not null default false,
   created_at   timestamptz not null default now(),
-  completed_at timestamptz
+  completed_at timestamptz,
+  due_on       date
 );
 
 create index if not exists tasks_user_id_idx on public.tasks (user_id);
 create index if not exists tasks_contexts_idx on public.tasks using gin (contexts);
+
+-- due_on: optional calendar day a task is due (drives the urgency badge in the UI).
+alter table public.tasks add column if not exists due_on date;
 
 -- ── Reminders (scheduled web push) ──────────────────────────
 -- reminder_at  : user-set instant the task first notifies (absolute UTC).

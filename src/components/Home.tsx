@@ -51,7 +51,8 @@ function readShared(): { title: string; note: string } {
 }
 
 export function Home() {
-  const { tasks, contexts, online, syncing, pending, loaded } = useStore();
+  const { tasks, contexts: rawContexts, online, syncing, pending, loaded } = useStore();
+  const contexts = useMemo(() => [...rawContexts].sort((a, b) => a.name.localeCompare(b.name)), [rawContexts]);
   // Filter view: any number of sticky contexts (long-pressed) plus at most one transient
   // (quick-tapped). The visible list is the intersection of all selected contexts.
   const [stickies, setStickies] = useState<string[]>([]);

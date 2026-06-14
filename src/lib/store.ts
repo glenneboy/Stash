@@ -313,6 +313,7 @@ export function createTask(title: string, contexts: string[], note?: string): st
     completed: false,
     created_at: new Date().toISOString(),
     completed_at: null,
+    due_on: null,
     reminder_at: null,
     notify_next_at: null,
     notify_stage: 0,
@@ -328,7 +329,7 @@ export function quickAddTask(title: string, contexts: string[]): void {
   showToast('Added', () => deleteTask(id));
 }
 
-export function updateTask(id: string, patch: Partial<Pick<Task, 'title' | 'note' | 'contexts'>>): void {
+export function updateTask(id: string, patch: Partial<Pick<Task, 'title' | 'note' | 'contexts' | 'due_on'>>): void {
   setTasks(state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   enqueue({ kind: 'task.update', id, patch });
 }

@@ -281,6 +281,22 @@ export function Home() {
     if (t) setEditing(t);
   }, [loaded, tasks]);
 
+  // Context deep-link: `?context=<name>` activates that context as a sticky filter once loaded.
+  // Silently ignored if the context doesn't exist or has no tasks.
+  const contextLinkHandled = useRef(false);
+  useEffect(() => {
+    if (contextLinkHandled.current || !loaded) return;
+    const name = new URLSearchParams(window.location.search).get('context');
+    contextLinkHandled.current = true;
+    if (!name) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    const ctx = contexts.find((c) => c.name.toLowerCase() === name.toLowerCase());
+    if (!ctx) return;
+    const hasTasks = tasks.some((t) => t.contexts.includes(ctx.id));
+    if (!hasTasks) return;
+    setStickies([ctx.id]);
+  }, [loaded, contexts, tasks]);
+
   return (
     <div className="mx-auto flex min-h-screen max-w-xl flex-col">
       <header className="safe-top flex items-center justify-between px-4 pb-1 pt-2">

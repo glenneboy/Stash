@@ -160,6 +160,17 @@ async function applyOp(op: Op): Promise<void> {
 
 let flushing = false;
 
+// PostgREST surfaces the Postgres SQLSTATE on a rejected write. Classes 22 (data
+// exception), 23 (integrity violation) and 42 (syntax / undefined column or table /
+// insufficient privilege) mean the write is malformed or not allowed — retrying can
+// never make it succeed. Such an op is dropped so it can't wedge the whole queue behind
+// it. Everything else (offline, network drop, 5xx, no code) is treated as transient and
+// left queued for the next attempt.
+function isPermanent(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && /^(22|23|42)/.test(code);
+}
+
 export async function flush(): Promise<void> {
   if (flushing || !navigator.onLine) return;
   if (readQueue().length === 0) return;
@@ -172,12 +183,19 @@ export async function flush(): Promise<void> {
     // snapshot would silently drop anything appended after it was taken.
     let queue = readQueue();
     while (queue.length > 0) {
-      await applyOp(queue[0]);
+      const op = queue[0];
+      try {
+        await applyOp(op);
+      } catch (error) {
+        // A transient failure stops the flush with the op still queued; retried later.
+        if (!isPermanent(error)) break;
+        // A permanently-rejected write can never succeed — drop it so the rest of the
+        // queue can still sync, rather than letting one bad op block everything.
+        console.warn('[stash] dropping un-syncable write', op, error);
+      }
       writeQueue(readQueue().slice(1));
       queue = readQueue();
     }
-  } catch {
-    // Stop on first failure; remaining ops stay queued for the next attempt.
   } finally {
     flushing = false;
     set({ syncing: false });

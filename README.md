@@ -15,9 +15,18 @@ Built with React 18 + Vite 5, Tailwind CSS 3, Supabase (Auth, Postgres, Realtime
 - **Note field** — optional multi-line note attached to any task; revealed in the capture bar when pre-filled (e.g. via Share).
 - **Context pre-seeding** — new tasks are automatically pre-tagged with whichever contexts are currently active in the filter, so you never have to re-select.
 
+### Profiles
+
+Profiles are named partitions (e.g. "Work", "Home") that give you a completely separate set of tasks and tags per context.
+
+- **ProfileSelector dropdown** in the header switches the active profile in one tap; defaults to **Personal** (the implicit profile all existing tasks and tags belong to).
+- **ProfileManager sheet** — create, rename, or delete profiles. Deleting a profile cascades to all of its tasks and contexts.
+- **Per-device preference** — the active profile is stored locally and not synced, so each device can view a different profile independently.
+- **Backwards compatible** — a `NULL` `profile_id` means Personal, so all pre-existing rows and writes from older app versions automatically belong to it with no migration or backfill needed.
+
 ### Contexts (Tags)
 
-Contexts are user-defined labels that group tasks. A task can carry zero or more contexts.
+Contexts are user-defined labels that group tasks. A task can carry zero or more contexts. Contexts are scoped to the active profile — each profile has its own independent set.
 
 - **Create / rename / delete** contexts via the manage sheet (the `…` button in the filter bar).
 - **Deleting a context** strips it from every task that referenced it (cascading removal).
@@ -71,7 +80,7 @@ The sort control (top-right of the active list) offers:
 | Title ↑/↓ | Alphabetical |
 | Custom | Appears once you've dragged tasks into a manual order |
 
-**Custom drag-to-reorder** — hold the six-dot grip on any task and drag. The drop position is shown as an accent-coloured line. Order is saved per-context combination in `localStorage`. Drag handles are hidden during search to prevent accidental reorders.
+**Custom drag-to-reorder** — hold the six-dot grip on any task and drag. The drop position is shown as an accent-coloured line. Order is saved per-context combination, namespaced per profile, in `localStorage`. Drag handles are hidden during search to prevent accidental reorders.
 
 ### Search
 
@@ -126,7 +135,7 @@ All deep-link params clean themselves from the URL after handling (`history.repl
 
 Create a new project at [supabase.com](https://supabase.com).
 
-In the SQL editor, run [`supabase/schema.sql`](supabase/schema.sql) to create the `tasks`, `contexts`, and `push_subscriptions` tables and their row-level-security policies.
+In the SQL editor, run [`supabase/schema.sql`](supabase/schema.sql) to create the `tasks`, `contexts`, `profiles`, and `push_subscriptions` tables and their row-level-security policies. For existing projects, apply [`supabase/migrations/20260615_profiles.sql`](supabase/migrations/20260615_profiles.sql) instead of re-running the full schema to add profiles support without touching existing data.
 
 Under **Authentication → Providers → Email**, ensure email is enabled (magic links work out of the box).
 
@@ -152,6 +161,15 @@ npm run dev
 ```
 
 Open the dev URL, enter your email, and click the magic link to sign in.
+
+## Testing
+
+```bash
+npm test        # run all Vitest tests
+npm run test    # alias
+```
+
+Tests live alongside source in `src/**/*.test.ts`. The suite covers profile filtering, the `null`/Default mapping, old-client backwards-compat, and store mutations.
 
 ## Build & deploy
 
@@ -182,18 +200,23 @@ src/
 │   ├── FilterBar.tsx     # context chips (quick-tap / long-press)
 │   ├── Home.tsx          # main view, deep-link handling, sort, drag-reorder
 │   ├── OpenInApp.tsx     # iOS PWA redirect helper
+│   ├── ProfileManager.tsx# profile selector dropdown + create/rename/delete sheet
 │   ├── TaskItem.tsx      # task row with swipe gestures and drag grip
 │   └── Toast.tsx         # undo toasts
 ├── lib/
+│   ├── profiles.ts       # profile filtering helpers (tasksForProfile, contextsForProfile)
+│   ├── profiles.test.ts  # Vitest tests — profile filtering and backwards-compat
 │   ├── push.ts           # push subscription helpers
 │   ├── reminders.ts      # reminder permission + subscription flow
 │   ├── store.ts          # state, offline queue, Supabase sync, Realtime
+│   ├── store.test.ts     # Vitest tests — store mutations and profile ops
 │   ├── supabase.ts       # Supabase client
 │   ├── tags.ts           # inline #tag parsing
 │   └── useStore.ts       # useSyncExternalStore hook
-├── types.ts              # Context, Task interfaces
+├── types.ts              # Profile, Context, Task interfaces
 ├── App.tsx               # auth gate + iOS deep-link redirect
 ├── main.tsx
 └── sw.ts                 # Workbox service worker (push, notification click)
-supabase/schema.sql       # tables + RLS — run this in Supabase SQL editor
+supabase/schema.sql                        # tables + RLS — run this in Supabase SQL editor
+supabase/migrations/20260615_profiles.sql  # adds profiles table + profile_id columns (existing projects)
 ```

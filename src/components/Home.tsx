@@ -21,7 +21,7 @@ function matchesQuery(task: Task, q: string): boolean {
   return task.title.toLowerCase().includes(q) || (task.note?.toLowerCase().includes(q) ?? false);
 }
 
-type SortField = 'date' | 'title' | 'custom';
+type SortField = 'date' | 'title' | 'due' | 'custom';
 type SortDir = 'asc' | 'desc';
 interface Sort {
   field: SortField;
@@ -29,6 +29,19 @@ interface Sort {
 }
 
 function sortTasks(tasks: Task[], { field, dir }: Sort): Task[] {
+  if (field === 'due') {
+    return [...tasks].sort((a, b) => {
+      const aHas = a.due_on != null;
+      const bHas = b.due_on != null;
+      if (aHas && bHas) {
+        const cmp = a.due_on!.localeCompare(b.due_on!);
+        return dir === 'asc' ? cmp : -cmp;
+      }
+      if (aHas) return -1;
+      if (bHas) return 1;
+      return 0;
+    });
+  }
   const cmp = (a: Task, b: Task) =>
     field === 'title' ? a.title.localeCompare(b.title) : a.created_at.localeCompare(b.created_at);
   return [...tasks].sort((a, b) => (dir === 'asc' ? cmp(a, b) : -cmp(a, b)));
@@ -393,6 +406,7 @@ export function Home() {
 
 const SORT_FIELDS: { field: Exclude<SortField, 'custom'>; label: string }[] = [
   { field: 'date', label: 'Date' },
+  { field: 'due', label: 'Due Date' },
   { field: 'title', label: 'Title' },
 ];
 
@@ -422,6 +436,8 @@ function SortControl({
       ? 'Custom'
       : sort.field === 'date'
       ? `Date ${sort.dir === 'asc' ? '↑' : '↓'}`
+      : sort.field === 'due'
+      ? `Due ${sort.dir === 'asc' ? '↑' : '↓'}`
       : `Title ${sort.dir === 'asc' ? '↑' : '↓'}`;
 
   return (

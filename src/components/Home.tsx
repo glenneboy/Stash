@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Task } from '../types';
+import type { Profile, Task } from '../types';
 import { useStore } from '../lib/useStore';
-import { quickAddTask, clearCompleted } from '../lib/store';
+import { quickAddTask, clearCompleted, setActiveProfile } from '../lib/store';
 import { parseTags } from '../lib/tags';
+import { tasksForProfile, contextsForProfile, profileName, DEFAULT_PROFILE_NAME } from '../lib/profiles';
 import { supabase } from '../lib/supabase';
 import { CaptureBar } from './CaptureBar';
 import { FilterBar } from './FilterBar';
 import { TaskItem } from './TaskItem';
 import { EditSheet } from './EditSheet';
 import { ContextManager } from './ContextManager';
+import { ProfileManager } from './ProfileManager';
 import { Toast } from './Toast';
 
 /** Intersection: a task matches only if it carries every selected context. Empty = all. */
@@ -61,8 +63,10 @@ function saveCustomOrders(orders: Record<string, string[]>) {
   localStorage.setItem(CUSTOM_ORDER_KEY, JSON.stringify(orders));
 }
 
-function getContextKey(selected: string[]): string {
-  return [...selected].sort().join('|');
+// Custom sort orders are stored per (profile, context-selection). Including the
+// profile prevents the empty-selection "All" key from colliding across profiles.
+function getContextKey(profileId: string | null, selected: string[]): string {
+  return `${profileId ?? 'default'}::${[...selected].sort().join('|')}`;
 }
 
 /**
@@ -88,8 +92,16 @@ interface DragState {
 }
 
 export function Home() {
-  const { tasks, contexts: rawContexts, online, syncing, pending, loaded } = useStore();
-  const contexts = useMemo(() => [...rawContexts].sort((a, b) => a.name.localeCompare(b.name)), [rawContexts]);
+  const { tasks: allTasks, contexts: rawContexts, profiles, activeProfileId, online, syncing, pending, loaded } =
+    useStore();
+  // Everything below operates on just the active profile's slice — switching
+  // profiles swaps to a completely separate set of tasks and tags.
+  const tasks = useMemo(() => tasksForProfile(allTasks, activeProfileId), [allTasks, activeProfileId]);
+  const contexts = useMemo(
+    () => contextsForProfile(rawContexts, activeProfileId).sort((a, b) => a.name.localeCompare(b.name)),
+    [rawContexts, activeProfileId],
+  );
+  const [profileManageOpen, setProfileManageOpen] = useState(false);
   // Filter view: any number of sticky contexts (long-pressed) plus at most one transient
   // (quick-tapped). The visible list is the intersection of all selected contexts.
   const [stickies, setStickies] = useState<string[]>([]);
@@ -121,7 +133,7 @@ export function Home() {
     [stickies, transient],
   );
 
-  const contextKey = useMemo(() => getContextKey(selected), [selected]);
+  const contextKey = useMemo(() => getContextKey(activeProfileId, selected), [activeProfileId, selected]);
 
   // When the context selection changes, auto-apply custom sort if one is saved,
   // or reset out of custom sort if none exists for the new context.
@@ -277,14 +289,24 @@ export function Home() {
     taskLinkHandled.current = true;
     if (!id) return;
     window.history.replaceState({}, '', window.location.pathname);
-    const t = tasks.find((x) => x.id === id);
-    if (t) setEditing(t);
-  }, [loaded, tasks]);
+    // Search across all profiles: a notification may target a task in one that
+    // isn't currently active, so switch to its profile before opening it.
+    const t = allTasks.find((x) => x.id === id);
+    if (t) {
+      if ((t.profile_id ?? null) !== activeProfileId) setActiveProfile(t.profile_id ?? null);
+      setEditing(t);
+    }
+  }, [loaded, allTasks, activeProfileId]);
 
   return (
     <div className="mx-auto flex min-h-screen max-w-xl flex-col">
       <header className="safe-top flex items-center justify-between px-4 pb-1 pt-2">
-        <h1 className="text-lg font-bold tracking-tight">Stash</h1>
+        <ProfileSelector
+          profiles={profiles}
+          activeProfileId={activeProfileId}
+          onSelect={setActiveProfile}
+          onManage={() => setProfileManageOpen(true)}
+        />
         <div className="flex items-center gap-3 text-xs text-muted">
           {!online && <span className="text-amber-400">Offline</span>}
           {online && syncing && <span>Syncing…</span>}
@@ -399,6 +421,7 @@ export function Home() {
         <EditSheet task={tasks.find((t) => t.id === editing.id) ?? editing} contexts={contexts} onClose={() => setEditing(null)} />
       )}
       {manageOpen && <ContextManager contexts={contexts} onClose={() => setManageOpen(false)} />}
+      {profileManageOpen && <ProfileManager profiles={profiles} onClose={() => setProfileManageOpen(false)} />}
       <Toast />
     </div>
   );
@@ -479,6 +502,70 @@ function SortControl({
         </>
       )}
     </div>
+  );
+}
+
+function ProfileSelector({
+  profiles,
+  activeProfileId,
+  onSelect,
+  onManage,
+}: {
+  profiles: Profile[];
+  activeProfileId: string | null;
+  onSelect: (id: string | null) => void;
+  onManage: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = profileName(profiles, activeProfileId);
+
+  function choose(id: string | null) {
+    onSelect(id);
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Switch profile"
+        className="flex items-center gap-1 text-lg font-bold tracking-tight"
+      >
+        <span>{current}</span>
+        <svg viewBox="0 0 24 24" className={`h-4 w-4 text-muted transition ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 z-20 mt-1 w-48 overflow-hidden rounded-xl border border-line bg-elevated shadow-lg">
+            <ProfileOption label={DEFAULT_PROFILE_NAME} active={activeProfileId === null} onClick={() => choose(null)} />
+            {profiles.map((p) => (
+              <ProfileOption key={p.id} label={p.name} active={activeProfileId === p.id} onClick={() => choose(p.id)} />
+            ))}
+            <button
+              onClick={() => {
+                setOpen(false);
+                onManage();
+              }}
+              className="flex w-full items-center gap-2 border-t border-line px-3 py-2 text-sm text-muted"
+            >
+              <span className="text-accent">+</span> Manage profiles…
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ProfileOption({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="flex w-full items-center justify-between px-3 py-2 text-sm text-muted">
+      <span className={active ? 'text-accent' : ''}>{label}</span>
+      {active && <span className="text-accent">✓</span>}
+    </button>
   );
 }
 

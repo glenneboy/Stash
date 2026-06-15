@@ -1,6 +1,6 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
-import type { Context, Task } from '../types';
+import type { Context, Profile, Task } from '../types';
 
 // ── Persisted state shape ────────────────────────────────────
 interface Toast {
@@ -12,6 +12,10 @@ interface Toast {
 interface State {
   tasks: Task[];
   contexts: Context[];
+  profiles: Profile[];
+  // The profile currently being viewed. null = the implicit Default profile.
+  // This is a per-device preference (not synced), so each device can view its own.
+  activeProfileId: string | null;
   loaded: boolean;
   online: boolean;
   syncing: boolean;
@@ -25,18 +29,27 @@ type Op =
   | { kind: 'task.delete'; id: string }
   | { kind: 'context.insert'; row: Context }
   | { kind: 'context.update'; id: string; patch: Partial<Context> }
-  | { kind: 'context.delete'; id: string };
+  | { kind: 'context.delete'; id: string }
+  | { kind: 'profile.insert'; row: Profile }
+  | { kind: 'profile.update'; id: string; patch: Partial<Profile> }
+  | { kind: 'profile.delete'; id: string };
 
 const KEY = {
   tasks: 'stash.tasks',
   contexts: 'stash.contexts',
+  profiles: 'stash.profiles',
   queue: 'stash.queue',
 };
+
+// Per-device active-profile preference, kept separate from synced data.
+const ACTIVE_PROFILE_KEY = 'stash.activeProfile';
 
 // ── In-memory state + subscribers ────────────────────────────
 let state: State = {
   tasks: load<Task[]>(KEY.tasks, []),
   contexts: load<Context[]>(KEY.contexts, []),
+  profiles: load<Profile[]>(KEY.profiles, []),
+  activeProfileId: load<string | null>(ACTIVE_PROFILE_KEY, null),
   loaded: false,
   online: navigator.onLine,
   syncing: false,
@@ -108,6 +121,11 @@ function setContexts(contexts: Context[]): void {
   set({ contexts });
 }
 
+function setProfiles(profiles: Profile[]): void {
+  save(KEY.profiles, profiles);
+  set({ profiles });
+}
+
 // ── Write queue ──────────────────────────────────────────────
 function readQueue(): Op[] {
   return load<Op[]>(KEY.queue, []);
@@ -155,6 +173,22 @@ async function applyOp(op: Op): Promise<void> {
       if (error) throw error;
       break;
     }
+    case 'profile.insert': {
+      const { error } = await supabase.from('profiles').insert(op.row);
+      if (error) throw error;
+      break;
+    }
+    case 'profile.update': {
+      const { error } = await supabase.from('profiles').update(op.patch).eq('id', op.id);
+      if (error) throw error;
+      break;
+    }
+    case 'profile.delete': {
+      // The DB foreign key cascades to this profile's tasks + contexts server-side.
+      const { error } = await supabase.from('profiles').delete().eq('id', op.id);
+      if (error) throw error;
+      break;
+    }
   }
 }
 
@@ -187,9 +221,10 @@ export async function flush(): Promise<void> {
 // ── Server fetch + reconcile ─────────────────────────────────
 async function fetchAll(): Promise<void> {
   if (!navigator.onLine) return;
-  const [tasksRes, ctxRes] = await Promise.all([
+  const [tasksRes, ctxRes, profRes] = await Promise.all([
     supabase.from('tasks').select('*').order('created_at', { ascending: false }),
     supabase.from('contexts').select('*').order('created_at', { ascending: true }),
+    supabase.from('profiles').select('*').order('created_at', { ascending: true }),
   ]);
   if (!tasksRes.error && tasksRes.data) {
     const incoming = tasksRes.data as Task[];
@@ -202,6 +237,7 @@ async function fetchAll(): Promise<void> {
     setTasks(merged);
   }
   if (!ctxRes.error && ctxRes.data) setContexts(ctxRes.data as Context[]);
+  if (!profRes.error && profRes.data) setProfiles(profRes.data as Profile[]);
 }
 
 // ── Realtime sync ────────────────────────────────────────────
@@ -237,6 +273,23 @@ function applyRemoteContext(event: string, next: Context | null, prevId: string 
   setContexts([...rest, next].sort((a, b) => a.created_at.localeCompare(b.created_at)));
 }
 
+function applyRemoteProfile(event: string, next: Profile | null, prevId: string | undefined): void {
+  const id = next?.id ?? prevId;
+  if (!id || hasPendingForRow(id)) return;
+  if (event === 'DELETE') {
+    // A profile delete cascades on the server; mirror that locally by dropping the
+    // profile and any of its tasks/contexts (their own DELETE events may also arrive).
+    if (id === state.activeProfileId) setActiveProfile(null);
+    setTasks(state.tasks.filter((t) => t.profile_id !== id));
+    setContexts(state.contexts.filter((c) => c.profile_id !== id));
+    setProfiles(state.profiles.filter((p) => p.id !== id));
+    return;
+  }
+  if (!next) return;
+  const rest = state.profiles.filter((p) => p.id !== id);
+  setProfiles([...rest, next].sort((a, b) => a.created_at.localeCompare(b.created_at)));
+}
+
 function onResume(): void {
   if (document.visibilityState === 'visible') void fetchAll();
 }
@@ -259,6 +312,11 @@ async function subscribeRealtime(): Promise<void> {
       'postgres_changes',
       { event: '*', schema: 'public', table: 'contexts', filter },
       (payload) => applyRemoteContext(payload.eventType, payload.new as Context, (payload.old as { id?: string }).id),
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'profiles', filter },
+      (payload) => applyRemoteProfile(payload.eventType, payload.new as Profile, (payload.old as { id?: string }).id),
     )
     .subscribe();
 
@@ -298,8 +356,20 @@ export function reset(): void {
   teardownRealtime();
   localStorage.removeItem(KEY.tasks);
   localStorage.removeItem(KEY.contexts);
+  localStorage.removeItem(KEY.profiles);
   localStorage.removeItem(KEY.queue);
-  state = { tasks: [], contexts: [], loaded: false, online: navigator.onLine, syncing: false, pending: 0, toast: null };
+  localStorage.removeItem(ACTIVE_PROFILE_KEY);
+  state = {
+    tasks: [],
+    contexts: [],
+    profiles: [],
+    activeProfileId: null,
+    loaded: false,
+    online: navigator.onLine,
+    syncing: false,
+    pending: 0,
+    toast: null,
+  };
   listeners.forEach((fn) => fn());
 }
 
@@ -317,6 +387,8 @@ export function createTask(title: string, contexts: string[], note?: string): st
     reminder_at: null,
     notify_next_at: null,
     notify_stage: 0,
+    // New tasks land in the profile currently being viewed (null = Default).
+    profile_id: state.activeProfileId,
   };
   setTasks([row, ...state.tasks]);
   enqueue({ kind: 'task.insert', row });
@@ -396,7 +468,13 @@ function restoreTask(task: Task): void {
 }
 
 export function createContext(name: string): void {
-  const row: Context = { id: crypto.randomUUID(), name: name.trim(), created_at: new Date().toISOString() };
+  const row: Context = {
+    id: crypto.randomUUID(),
+    name: name.trim(),
+    created_at: new Date().toISOString(),
+    // Tags are scoped to the profile they're created in (null = Default).
+    profile_id: state.activeProfileId,
+  };
   setContexts([...state.contexts, row]);
   enqueue({ kind: 'context.insert', row });
 }
@@ -413,4 +491,34 @@ export function deleteContext(id: string): void {
     .forEach((t) => updateTask(t.id, { contexts: t.contexts.filter((c) => c !== id) }));
   setContexts(state.contexts.filter((c) => c.id !== id));
   enqueue({ kind: 'context.delete', id });
+}
+
+// ── Profiles ─────────────────────────────────────────────────
+// Select which profile is being viewed. Per-device only — not synced or queued.
+export function setActiveProfile(id: string | null): void {
+  save(ACTIVE_PROFILE_KEY, id);
+  set({ activeProfileId: id });
+}
+
+export function createProfile(name: string): string {
+  const row: Profile = { id: crypto.randomUUID(), name: name.trim(), created_at: new Date().toISOString() };
+  setProfiles([...state.profiles, row]);
+  enqueue({ kind: 'profile.insert', row });
+  return row.id;
+}
+
+export function renameProfile(id: string, name: string): void {
+  setProfiles(state.profiles.map((p) => (p.id === id ? { ...p, name: name.trim() } : p)));
+  enqueue({ kind: 'profile.update', id, patch: { name: name.trim() } });
+}
+
+// Deleting a profile removes it and all of its tasks + contexts. The single queued
+// profile.delete relies on the DB foreign-key cascade to remove the children
+// server-side; here we drop them optimistically from local state.
+export function deleteProfile(id: string): void {
+  if (state.activeProfileId === id) setActiveProfile(null);
+  setTasks(state.tasks.filter((t) => t.profile_id !== id));
+  setContexts(state.contexts.filter((c) => c.profile_id !== id));
+  setProfiles(state.profiles.filter((p) => p.id !== id));
+  enqueue({ kind: 'profile.delete', id });
 }

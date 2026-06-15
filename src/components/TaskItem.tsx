@@ -4,15 +4,24 @@ import { toggleComplete, deleteTask } from '../lib/store';
 import { hasReminder, isOverdue } from '../lib/reminders';
 import { dueInfo } from '../lib/due';
 
+interface DragGrip {
+  onPointerDown: (e: React.PointerEvent) => void;
+  onPointerMove: (e: React.PointerEvent) => void;
+  onPointerUp: () => void;
+}
+
 interface Props {
   task: Task;
   contexts: Context[];
   onEdit: (task: Task) => void;
+  dragGrip?: DragGrip;
+  isDragging?: boolean;
+  dragOver?: 'above' | 'below';
 }
 
 const SWIPE_THRESHOLD = 80;
 
-export function TaskItem({ task, contexts, onEdit }: Props) {
+export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOver }: Props) {
   const tags = task.contexts
     .map((id) => contexts.find((c) => c.id === id)?.name)
     .filter((n): n is string => Boolean(n));
@@ -80,7 +89,15 @@ export function TaskItem({ task, contexts, onEdit }: Props) {
   }
 
   return (
-    <li className="relative overflow-hidden">
+    <li
+      data-task-id={task.id}
+      className={`relative overflow-hidden transition-opacity ${isDragging ? 'opacity-30' : ''}`}
+    >
+      {dragOver && (
+        <div
+          className={`pointer-events-none absolute inset-x-0 z-30 h-0.5 bg-accent ${dragOver === 'above' ? 'top-0' : 'bottom-0'}`}
+        />
+      )}
       <div
         className={`pointer-events-none absolute inset-0 flex items-center justify-between px-5 text-white ${
           dx > 0 ? 'bg-accent' : dx < 0 ? 'bg-red-600' : ''
@@ -103,6 +120,29 @@ export function TaskItem({ task, contexts, onEdit }: Props) {
         onPointerCancel={onPointerUp}
         onClickCapture={onClickCapture}
       >
+        {dragGrip && (
+          <div
+            className="touch-none shrink-0 cursor-grab self-center text-muted/30 active:cursor-grabbing"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              e.currentTarget.setPointerCapture(e.pointerId);
+              dragGrip.onPointerDown(e);
+            }}
+            onPointerMove={(e) => dragGrip.onPointerMove(e)}
+            onPointerUp={() => dragGrip.onPointerUp()}
+            onPointerCancel={() => dragGrip.onPointerUp()}
+          >
+            <svg viewBox="0 0 10 16" className="h-4 w-3" fill="currentColor">
+              <circle cx="2.5" cy="2" r="1.5" />
+              <circle cx="7.5" cy="2" r="1.5" />
+              <circle cx="2.5" cy="8" r="1.5" />
+              <circle cx="7.5" cy="8" r="1.5" />
+              <circle cx="2.5" cy="14" r="1.5" />
+              <circle cx="7.5" cy="14" r="1.5" />
+            </svg>
+          </div>
+        )}
+
         <button
           aria-label={task.completed ? 'Mark incomplete' : 'Mark complete'}
           onClick={() => toggleComplete(task.id)}

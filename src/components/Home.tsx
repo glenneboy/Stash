@@ -21,7 +21,7 @@ function matchesQuery(task: Task, q: string): boolean {
   return task.title.toLowerCase().includes(q) || (task.note?.toLowerCase().includes(q) ?? false);
 }
 
-type SortField = 'date' | 'title';
+type SortField = 'date' | 'title' | 'custom';
 type SortDir = 'asc' | 'desc';
 interface Sort {
   field: SortField;
@@ -32,6 +32,24 @@ function sortTasks(tasks: Task[], { field, dir }: Sort): Task[] {
   const cmp = (a: Task, b: Task) =>
     field === 'title' ? a.title.localeCompare(b.title) : a.created_at.localeCompare(b.created_at);
   return [...tasks].sort((a, b) => (dir === 'asc' ? cmp(a, b) : -cmp(a, b)));
+}
+
+const CUSTOM_ORDER_KEY = 'stash.customOrder';
+
+function loadCustomOrders(): Record<string, string[]> {
+  try {
+    return JSON.parse(localStorage.getItem(CUSTOM_ORDER_KEY) ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveCustomOrders(orders: Record<string, string[]>) {
+  localStorage.setItem(CUSTOM_ORDER_KEY, JSON.stringify(orders));
+}
+
+function getContextKey(selected: string[]): string {
+  return [...selected].sort().join('|');
 }
 
 /**
@@ -50,6 +68,12 @@ function readShared(): { title: string; note: string } {
   return { title, note };
 }
 
+interface DragState {
+  id: string;
+  overId: string | null;
+  before: boolean;
+}
+
 export function Home() {
   const { tasks, contexts: rawContexts, online, syncing, pending, loaded } = useStore();
   const contexts = useMemo(() => [...rawContexts].sort((a, b) => a.name.localeCompare(b.name)), [rawContexts]);
@@ -64,44 +88,65 @@ export function Home() {
   const [query, setQuery] = useState('');
   const [activeSort, setActiveSort] = useState<Sort>({ field: 'date', dir: 'desc' });
   const [completedSort, setCompletedSort] = useState<Sort>({ field: 'date', dir: 'desc' });
+  const [customOrders, setCustomOrders] = useState<Record<string, string[]>>(loadCustomOrders);
   const shared = useMemo(readShared, []);
 
-  // Quick-capture deeplink: `?add=<text>` creates a task headlessly once the store has
-  // loaded (so inline `#tags` can resolve against existing contexts). Fires once per load.
-  const addHandled = useRef(false);
-  useEffect(() => {
-    if (addHandled.current || !loaded) return;
-    const text = new URLSearchParams(window.location.search).get('add');
-    addHandled.current = true;
-    if (text === null) return;
-    window.history.replaceState({}, '', window.location.pathname);
-    const { title, tagIds } = parseTags(text, contexts);
-    if (title) quickAddTask(title, tagIds);
-  }, [loaded, contexts]);
+  // Drag state: ref for fresh reads in handlers, state for rendering.
+  const dragData = useRef<DragState | null>(null);
+  const [drag, _setDrag] = useState<DragState | null>(null);
+  function setDrag(v: DragState | null) {
+    dragData.current = v;
+    _setDrag(v);
+  }
 
-  // Notification deep-link: `?task=<id>` opens that task's edit sheet once loaded.
-  const taskLinkHandled = useRef(false);
-  useEffect(() => {
-    if (taskLinkHandled.current || !loaded) return;
-    const id = new URLSearchParams(window.location.search).get('task');
-    taskLinkHandled.current = true;
-    if (!id) return;
-    window.history.replaceState({}, '', window.location.pathname);
-    const t = tasks.find((x) => x.id === id);
-    if (t) setEditing(t);
-  }, [loaded, tasks]);
+  const listRef = useRef<HTMLUListElement>(null);
+  // Always-fresh reference to the current active list for use in event handlers.
+  const activeRef = useRef<Task[]>([]);
 
   const selected = useMemo(
     () => (transient && !stickies.includes(transient) ? [...stickies, transient] : stickies),
     [stickies, transient],
   );
 
+  const contextKey = useMemo(() => getContextKey(selected), [selected]);
+
+  // When the context selection changes, auto-apply custom sort if one is saved,
+  // or reset out of custom sort if none exists for the new context.
+  useEffect(() => {
+    setActiveSort((prev) => {
+      if (customOrders[contextKey]) return { field: 'custom', dir: 'asc' };
+      if (prev.field === 'custom') return { field: 'date', dir: 'desc' };
+      return prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contextKey]);
+
   const q = query.trim().toLowerCase();
   const visible = useMemo(
     () => tasks.filter((t) => matchesSelection(t, selected) && matchesQuery(t, q)),
     [tasks, selected, q],
   );
-  const active = useMemo(() => sortTasks(visible.filter((t) => !t.completed), activeSort), [visible, activeSort]);
+
+  const active = useMemo(() => {
+    const activeTasks = visible.filter((t) => !t.completed);
+    let result: Task[];
+    if (activeSort.field === 'custom') {
+      const order = customOrders[contextKey];
+      if (order) {
+        const orderMap = new Map(order.map((id, i) => [id, i]));
+        result = [...activeTasks].sort(
+          (a, b) => (orderMap.get(a.id) ?? Infinity) - (orderMap.get(b.id) ?? Infinity),
+        );
+      } else {
+        result = sortTasks(activeTasks, { field: 'date', dir: 'desc' });
+      }
+    } else {
+      result = sortTasks(activeTasks, activeSort);
+    }
+    activeRef.current = result;
+    return result;
+  }, [visible, activeSort, customOrders, contextKey]);
+
   const completed = useMemo(() => sortTasks(visible.filter((t) => t.completed), completedSort), [visible, completedSort]);
 
   // Quick tap: toggle the transient, un-stick a sticky (leaving the transient), or set a new
@@ -130,6 +175,98 @@ export function Home() {
       return !open;
     });
   }
+
+  // When switching away from custom sort, forget the stored order for this context.
+  function handleActiveSortChange(sort: Sort) {
+    if (sort.field !== 'custom' && customOrders[contextKey]) {
+      const updated = { ...customOrders };
+      delete updated[contextKey];
+      setCustomOrders(updated);
+      saveCustomOrders(updated);
+    }
+    setActiveSort(sort);
+  }
+
+  // --- Drag-to-reorder ---
+
+  function findTaskAtY(y: number): { id: string; before: boolean } | null {
+    if (!listRef.current) return null;
+    const items = listRef.current.querySelectorAll<HTMLElement>('li[data-task-id]');
+    for (const item of items) {
+      const rect = item.getBoundingClientRect();
+      if (y >= rect.top && y <= rect.bottom) {
+        return { id: item.dataset.taskId!, before: y < rect.top + rect.height / 2 };
+      }
+    }
+    return null;
+  }
+
+  function startDrag(_e: React.PointerEvent, taskId: string) {
+    // Initialise a custom order from the current display order if one isn't saved yet.
+    if (!customOrders[contextKey]) {
+      const ids = activeRef.current.map((t) => t.id);
+      const updated = { ...customOrders, [contextKey]: ids };
+      setCustomOrders(updated);
+      saveCustomOrders(updated);
+      setActiveSort({ field: 'custom', dir: 'asc' });
+    }
+    setDrag({ id: taskId, overId: null, before: true });
+  }
+
+  function moveDrag(e: React.PointerEvent) {
+    const d = dragData.current;
+    if (!d) return;
+    const result = findTaskAtY(e.clientY);
+    if (!result) return;
+    if (d.overId !== result.id || d.before !== result.before) {
+      setDrag({ ...d, overId: result.id, before: result.before });
+    }
+  }
+
+  function endDrag() {
+    const d = dragData.current;
+    if (d?.overId && d.overId !== d.id) {
+      const ids = activeRef.current.map((t) => t.id);
+      const filtered = ids.filter((id) => id !== d.id);
+      const targetIdx = filtered.indexOf(d.overId);
+      if (targetIdx !== -1) {
+        filtered.splice(d.before ? targetIdx : targetIdx + 1, 0, d.id);
+        const updated = { ...customOrders, [contextKey]: filtered };
+        setCustomOrders(updated);
+        saveCustomOrders(updated);
+      }
+    }
+    setDrag(null);
+  }
+
+  const hasCustomOrder = Boolean(customOrders[contextKey]);
+  // Disable drag handles while a search filter is active.
+  const dragEnabled = !q;
+
+  // Quick-capture deeplink: `?add=<text>` creates a task headlessly once the store has
+  // loaded (so inline `#tags` can resolve against existing contexts). Fires once per load.
+  const addHandled = useRef(false);
+  useEffect(() => {
+    if (addHandled.current || !loaded) return;
+    const text = new URLSearchParams(window.location.search).get('add');
+    addHandled.current = true;
+    if (text === null) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    const { title, tagIds } = parseTags(text, contexts);
+    if (title) quickAddTask(title, tagIds);
+  }, [loaded, contexts]);
+
+  // Notification deep-link: `?task=<id>` opens that task's edit sheet once loaded.
+  const taskLinkHandled = useRef(false);
+  useEffect(() => {
+    if (taskLinkHandled.current || !loaded) return;
+    const id = new URLSearchParams(window.location.search).get('task');
+    taskLinkHandled.current = true;
+    if (!id) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    const t = tasks.find((x) => x.id === id);
+    if (t) setEditing(t);
+  }, [loaded, tasks]);
 
   return (
     <div className="mx-auto flex min-h-screen max-w-xl flex-col">
@@ -188,7 +325,7 @@ export function Home() {
         {active.length === 0 && completed.length === 0 ? (
           q ? (
             <div className="grid place-items-center px-8 py-24 text-center">
-              <p className="text-muted">No matches for “{query.trim()}”.</p>
+              <p className="text-muted">No matches for "{query.trim()}".</p>
             </div>
           ) : (
             <EmptyState loaded={loaded} />
@@ -197,12 +334,24 @@ export function Home() {
           <>
             {active.length > 0 && (
               <div className="flex items-center justify-end px-4 pt-2">
-                <SortControl sort={activeSort} onChange={setActiveSort} />
+                <SortControl sort={activeSort} onChange={handleActiveSortChange} hasCustom={hasCustomOrder} />
               </div>
             )}
-            <ul className="divide-y divide-line/60">
+            <ul ref={listRef} className="divide-y divide-line/60">
               {active.map((t) => (
-                <TaskItem key={t.id} task={t} contexts={contexts} onEdit={setEditing} />
+                <TaskItem
+                  key={t.id}
+                  task={t}
+                  contexts={contexts}
+                  onEdit={setEditing}
+                  isDragging={drag?.id === t.id}
+                  dragOver={drag?.overId === t.id ? (drag.before ? 'above' : 'below') : undefined}
+                  dragGrip={dragEnabled ? {
+                    onPointerDown: (e) => startDrag(e, t.id),
+                    onPointerMove: moveDrag,
+                    onPointerUp: endDrag,
+                  } : undefined}
+                />
               ))}
             </ul>
           </>
@@ -242,38 +391,71 @@ export function Home() {
   );
 }
 
-const SORT_FIELDS: { field: SortField; label: string }[] = [
+const SORT_FIELDS: { field: Exclude<SortField, 'custom'>; label: string }[] = [
   { field: 'date', label: 'Date' },
   { field: 'title', label: 'Title' },
 ];
 
-function SortControl({ sort, onChange }: { sort: Sort; onChange: (s: Sort) => void }) {
+function SortControl({
+  sort,
+  onChange,
+  hasCustom,
+}: {
+  sort: Sort;
+  onChange: (s: Sort) => void;
+  hasCustom?: boolean;
+}) {
   const [open, setOpen] = useState(false);
 
   function pick(field: SortField) {
+    if (field === 'custom') {
+      setOpen(false);
+      return;
+    }
     if (field === sort.field) onChange({ field, dir: sort.dir === 'asc' ? 'desc' : 'asc' });
     else onChange({ field, dir: field === 'date' ? 'desc' : 'asc' });
     setOpen(false);
   }
 
+  const label =
+    sort.field === 'custom'
+      ? 'Custom'
+      : sort.field === 'date'
+      ? `Date ${sort.dir === 'asc' ? '↑' : '↓'}`
+      : `Title ${sort.dir === 'asc' ? '↑' : '↓'}`;
+
   return (
     <div className="relative">
-      <button onClick={() => setOpen((o) => !o)} aria-label="Sort" className={open ? 'text-accent' : 'text-muted'}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Sort"
+        className={`flex items-center gap-1 text-xs ${open ? 'text-accent' : 'text-muted'}`}
+      >
         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M7 4v16m0 0l-3-3m3 3l3-3M17 20V4m0 0l-3 3m3-3l3 3" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
+        <span>{label}</span>
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute right-0 z-20 mt-1 w-32 overflow-hidden rounded-xl border border-line bg-elevated shadow-lg">
-            {SORT_FIELDS.map(({ field, label }) => (
+            {hasCustom && (
+              <button
+                onClick={() => pick('custom')}
+                className="flex w-full items-center justify-between px-3 py-2 text-sm text-muted"
+              >
+                <span className={sort.field === 'custom' ? 'text-accent' : ''}>Custom</span>
+                {sort.field === 'custom' && <span className="text-accent">✓</span>}
+              </button>
+            )}
+            {SORT_FIELDS.map(({ field, label: fieldLabel }) => (
               <button
                 key={field}
                 onClick={() => pick(field)}
                 className="flex w-full items-center justify-between px-3 py-2 text-sm text-muted"
               >
-                <span className={field === sort.field ? 'text-accent' : ''}>{label}</span>
+                <span className={field === sort.field ? 'text-accent' : ''}>{fieldLabel}</span>
                 {field === sort.field && <span className="text-accent">{sort.dir === 'asc' ? '↑' : '↓'}</span>}
               </button>
             ))}

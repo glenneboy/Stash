@@ -3,6 +3,7 @@ import type { Context, Profile, Task } from '../types';
 import {
   DEFAULT_PROFILE_NAME,
   contextsForProfile,
+  planContextMigration,
   profileName,
   profileOf,
   tasksForProfile,
@@ -94,5 +95,58 @@ describe('profileName', () => {
 
   it('falls back to the Default name for an unknown id (e.g. just-deleted profile)', () => {
     expect(profileName(profiles, 'ghost')).toBe(DEFAULT_PROFILE_NAME);
+  });
+});
+
+describe('planContextMigration', () => {
+  // Deterministic factory so created ids are easy to assert on.
+  let n = 0;
+  const makeContext = (name: string): Context => ({
+    id: `new-${n++}`,
+    name,
+    created_at: '2026-01-01T00:00:00.000Z',
+    profile_id: 'target',
+  });
+
+  it('re-points a tag at the destination tag with the same name (case-insensitive, no duplicate created)', () => {
+    const all = [
+      { ...context('src', 'work'), name: 'Errands' },
+      { ...context('dst', 'target'), name: 'errands' },
+    ];
+    const { contexts, created } = planContextMigration(['src'], all, 'target', makeContext);
+    expect(created).toEqual([]);
+    expect(contexts).toEqual(['dst']);
+  });
+
+  it('creates a missing tag in the destination and points the task at the new copy', () => {
+    const named = [{ ...context('src', 'work'), name: 'Standup' }];
+    const { contexts, created } = planContextMigration(['src'], named, 'target', makeContext);
+    expect(created).toHaveLength(1);
+    expect(created[0].name).toBe('Standup');
+    expect(created[0].profile_id).toBe('target');
+    expect(contexts).toEqual([created[0].id]);
+  });
+
+  it('creates missing tags in the Default (null) profile too', () => {
+    const named = [{ ...context('src', 'work'), name: 'Standup' }];
+    const make = (name: string) => context(`d-${name}`, null);
+    const { created } = planContextMigration(['src'], named, null, make);
+    expect(created[0].profile_id).toBe(null);
+  });
+
+  it('drops dangling ids that no longer resolve to a tag', () => {
+    const { contexts, created } = planContextMigration(['ghost'], [], 'target', makeContext);
+    expect(contexts).toEqual([]);
+    expect(created).toEqual([]);
+  });
+
+  it('reuses a single new tag (deduped) when the task carries two source tags of the same name', () => {
+    const named = [
+      { ...context('a', 'work'), name: 'Urgent' },
+      { ...context('b', 'work'), name: 'urgent' },
+    ];
+    const { contexts, created } = planContextMigration(['a', 'b'], named, 'target', makeContext);
+    expect(created).toHaveLength(1);
+    expect(contexts).toEqual([created[0].id]);
   });
 });

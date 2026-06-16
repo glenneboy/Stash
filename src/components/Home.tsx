@@ -434,7 +434,7 @@ export function Home() {
       </main>
 
       {editing && (
-        <EditSheet task={tasks.find((t) => t.id === editing.id) ?? editing} contexts={contexts} onClose={() => setEditing(null)} />
+        <EditSheet task={tasks.find((t) => t.id === editing.id) ?? editing} contexts={contexts} profiles={profiles} onClose={() => setEditing(null)} />
       )}
       {manageOpen && <ContextManager contexts={contexts} onClose={() => setManageOpen(false)} />}
       {profileManageOpen && <ProfileManager profiles={profiles} onClose={() => setProfileManageOpen(false)} />}

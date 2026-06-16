@@ -30,7 +30,10 @@ import {
   createTask,
   createContext,
   deleteProfile,
+  moveTaskToProfile,
+  runUndo,
 } from './store';
+import { contextsForProfile, tasksForProfile } from './profiles';
 
 const ACTIVE_PROFILE_KEY = 'stash.activeProfile';
 
@@ -58,6 +61,71 @@ describe('setActiveProfile', () => {
     setActiveProfile('home');
     expect(getSnapshot().activeProfileId).toBe('home');
     expect(localStorage.getItem(ACTIVE_PROFILE_KEY)).toBe(JSON.stringify('home'));
+  });
+});
+
+describe('moveTaskToProfile', () => {
+  it('moves the task into the target profile', () => {
+    const id = createTask('write report', []);
+    moveTaskToProfile(id, 'work');
+    expect(getSnapshot().tasks.find((t) => t.id === id)?.profile_id).toBe('work');
+  });
+
+  it('is a no-op when the task is already in the target profile', () => {
+    setActiveProfile('work');
+    const id = createTask('already here', []);
+    const before = getSnapshot().tasks;
+    moveTaskToProfile(id, 'work');
+    expect(getSnapshot().tasks).toBe(before);
+  });
+
+  it('re-points the moved task at the destination tag that shares a name', () => {
+    // A "Errands" tag exists in both profiles.
+    setActiveProfile(null);
+    createContext('Errands');
+    const defaultErrand = getSnapshot().contexts.find((c) => c.profile_id === null)!;
+    setActiveProfile('work');
+    createContext('Errands');
+    const workErrand = getSnapshot().contexts.find((c) => c.profile_id === 'work')!;
+
+    setActiveProfile(null);
+    const id = createTask('buy stamps', [defaultErrand.id]);
+    moveTaskToProfile(id, 'work');
+
+    const moved = getSnapshot().tasks.find((t) => t.id === id)!;
+    expect(moved.contexts).toEqual([workErrand.id]);
+    // No duplicate tag was created in the destination.
+    expect(contextsForProfile(getSnapshot().contexts, 'work')).toHaveLength(1);
+  });
+
+  it('creates a missing tag in the destination so the moved task keeps it', () => {
+    setActiveProfile(null);
+    createContext('Receipts');
+    const receipts = getSnapshot().contexts.find((c) => c.profile_id === null)!;
+    const id = createTask('file taxes', [receipts.id]);
+
+    moveTaskToProfile(id, 'work');
+
+    const workContexts = contextsForProfile(getSnapshot().contexts, 'work');
+    expect(workContexts).toHaveLength(1);
+    expect(workContexts[0].name).toBe('Receipts');
+    const moved = getSnapshot().tasks.find((t) => t.id === id)!;
+    expect(moved.contexts).toEqual([workContexts[0].id]);
+  });
+
+  it('undo restores the task to its original profile and tags', () => {
+    setActiveProfile(null);
+    createContext('Receipts');
+    const receipts = getSnapshot().contexts.find((c) => c.profile_id === null)!;
+    const id = createTask('file taxes', [receipts.id]);
+
+    moveTaskToProfile(id, 'work');
+    runUndo();
+
+    const restored = getSnapshot().tasks.find((t) => t.id === id)!;
+    expect(restored.profile_id).toBe(null);
+    expect(restored.contexts).toEqual([receipts.id]);
+    expect(tasksForProfile(getSnapshot().tasks, null).map((t) => t.id)).toContain(id);
   });
 });
 

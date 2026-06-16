@@ -1,6 +1,7 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import type { Context, Profile, Task } from '../types';
+import { planContextMigration, profileName } from './profiles';
 
 // ── Persisted state shape ────────────────────────────────────
 interface Toast {
@@ -418,6 +419,46 @@ export function clearReminder(id: string): void {
   const patch: Partial<Task> = { reminder_at: null, notify_next_at: null, notify_stage: 0 };
   setTasks(state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   enqueue({ kind: 'task.update', id, patch });
+}
+
+// Move a task to another profile. Tags are profile-scoped, so we re-point the
+// task's tags at the destination's matching tags (by name), creating any that are
+// missing so nothing is lost. An undo toast restores the task's prior profile and
+// tags exactly. No-op if the task is already in the target profile.
+export function moveTaskToProfile(id: string, targetProfileId: string | null): void {
+  const task = state.tasks.find((t) => t.id === id);
+  if (!task) return;
+  const from = task.profile_id ?? null;
+  if (from === targetProfileId) return;
+  const prevContexts = task.contexts;
+
+  const { contexts, created } = planContextMigration(
+    task.contexts,
+    state.contexts,
+    targetProfileId,
+    (name) => ({
+      id: crypto.randomUUID(),
+      name,
+      created_at: new Date().toISOString(),
+      profile_id: targetProfileId,
+    }),
+  );
+
+  // Create the missing tags in the destination before re-pointing the task at them.
+  if (created.length > 0) {
+    setContexts([...state.contexts, ...created]);
+    created.forEach((row) => enqueue({ kind: 'context.insert', row }));
+  }
+
+  const patch: Partial<Task> = { profile_id: targetProfileId, contexts };
+  setTasks(state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  enqueue({ kind: 'task.update', id, patch });
+
+  showToast(`Moved to ${profileName(state.profiles, targetProfileId)}`, () => {
+    const undo: Partial<Task> = { profile_id: from, contexts: prevContexts };
+    setTasks(state.tasks.map((t) => (t.id === id ? { ...t, ...undo } : t)));
+    enqueue({ kind: 'task.update', id, patch: undo });
+  });
 }
 
 export function toggleComplete(id: string): void {

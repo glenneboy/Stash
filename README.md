@@ -99,8 +99,9 @@ Toggle the search icon in the header to reveal a real-time text filter that matc
 | Parameter | Behaviour |
 |---|---|
 | `?add=<text>` | Headlessly creates a task; supports inline `#tags` |
-| `?task=<id>` | Opens the edit sheet for that task. If the task lives in a non-active profile, the app switches to that profile first — there is currently no dedicated `?profile=<id>` link to open a profile directly, this is the only way to deep-link into one. |
+| `?task=<id>` | Opens the edit sheet for that task. If the task lives in a non-active profile, the app switches to that profile first. |
 | `?context=<name>` | Sticky-activates a context filter by name (case-insensitive) in the current profile; silently ignored if the context doesn't exist or has no tasks |
+| `?profile=<name>` | Switches to the named profile (case-insensitive); also matches "Personal" for the Default profile. Silently ignored if no profile matches. |
 | `?title=&text=&url=` | PWA Share Target — content arrives pre-filled in the capture bar |
 
 All deep-link params clean themselves from the URL after handling (`history.replaceState`).

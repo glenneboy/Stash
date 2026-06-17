@@ -29,6 +29,15 @@ export function profileName(profiles: Profile[], activeId: string | null): strin
   return profiles.find((p) => p.id === activeId)?.name ?? DEFAULT_PROFILE_NAME;
 }
 
+// Resolve a profile id from a display name, case-insensitively, for the
+// `?profile=<name>` deep link. Matches the Default profile's name too. Returns
+// undefined (distinct from the valid null id) when nothing matches.
+export function profileIdByName(profiles: Profile[], name: string): string | null | undefined {
+  const key = name.trim().toLowerCase();
+  if (key === DEFAULT_PROFILE_NAME.toLowerCase()) return DEFAULT_PROFILE_ID;
+  return profiles.find((p) => p.name.toLowerCase() === key)?.id;
+}
+
 // ── Moving tasks between profiles ────────────────────────────
 // Tags (contexts) are scoped to a profile, so a task's context ids only exist in
 // the profile it currently lives in. When a task moves to another profile we

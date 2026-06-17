@@ -4,6 +4,7 @@ import {
   DEFAULT_PROFILE_NAME,
   contextsForProfile,
   planContextMigration,
+  profileIdByName,
   profileName,
   profileOf,
   tasksForProfile,
@@ -95,6 +96,28 @@ describe('profileName', () => {
 
   it('falls back to the Default name for an unknown id (e.g. just-deleted profile)', () => {
     expect(profileName(profiles, 'ghost')).toBe(DEFAULT_PROFILE_NAME);
+  });
+});
+
+describe('profileIdByName', () => {
+  const profiles: Profile[] = [{ id: 'work-id', name: 'Work', created_at: '2026-01-01T00:00:00.000Z' }];
+
+  it('resolves a named profile case-insensitively', () => {
+    expect(profileIdByName(profiles, 'work')).toBe('work-id');
+    expect(profileIdByName(profiles, 'WORK')).toBe('work-id');
+  });
+
+  it('resolves the Default profile name to null, case-insensitively', () => {
+    expect(profileIdByName(profiles, 'Personal')).toBe(null);
+    expect(profileIdByName(profiles, 'personal')).toBe(null);
+  });
+
+  it('returns undefined for a name that matches nothing', () => {
+    expect(profileIdByName(profiles, 'ghost')).toBeUndefined();
+  });
+
+  it('trims surrounding whitespace before matching', () => {
+    expect(profileIdByName(profiles, '  Work  ')).toBe('work-id');
   });
 });
 

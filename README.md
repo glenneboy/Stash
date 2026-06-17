@@ -86,13 +86,21 @@ Toggle the search icon in the header to reveal a real-time text filter that matc
 - Tapping a notification deep-links straight to the task (`?task=<id>`).
 - The bell icon on a task turns red when a reminder is overdue.
 
+### Profiles
+
+- Switch between isolated **profiles** (e.g. "Work", "Home") from the selector in the header — each profile has its own completely separate set of tasks and tags.
+- The default ("Personal") profile is implicit: tasks/contexts with no `profile_id` belong to it, so existing data needs no migration.
+- **Manage profiles** (create / rename / delete) via the "Manage profiles…" entry in the selector; deleting a profile cascades to its tasks and tags.
+- Custom drag-to-reorder order, and the active filter selection, are namespaced per profile.
+- **Move a task to another profile** from its edit sheet ("Move this to…"). Its tags are re-pointed to matching tags (by name, case-insensitive) in the destination, creating any that don't exist there yet, so the task keeps every tag. Shows a "Moved to … · Undo" toast.
+
 ### Deep Links
 
 | Parameter | Behaviour |
 |---|---|
 | `?add=<text>` | Headlessly creates a task; supports inline `#tags` |
-| `?task=<id>` | Opens the edit sheet for that task |
-| `?context=<name>` | Sticky-activates a context filter by name (case-insensitive); silently ignored if the context doesn't exist or has no tasks |
+| `?task=<id>` | Opens the edit sheet for that task. If the task lives in a non-active profile, the app switches to that profile first — there is currently no dedicated `?profile=<id>` link to open a profile directly, this is the only way to deep-link into one. |
+| `?context=<name>` | Sticky-activates a context filter by name (case-insensitive) in the current profile; silently ignored if the context doesn't exist or has no tasks |
 | `?title=&text=&url=` | PWA Share Target — content arrives pre-filled in the capture bar |
 
 All deep-link params clean themselves from the URL after handling (`history.replaceState`).
@@ -182,9 +190,11 @@ src/
 │   ├── FilterBar.tsx     # context chips (quick-tap / long-press)
 │   ├── Home.tsx          # main view, deep-link handling, sort, drag-reorder
 │   ├── OpenInApp.tsx     # iOS PWA redirect helper
+│   ├── ProfileManager.tsx# create / rename / delete profiles
 │   ├── TaskItem.tsx      # task row with swipe gestures and drag grip
 │   └── Toast.tsx         # undo toasts
 ├── lib/
+│   ├── profiles.ts       # profile filtering + cross-profile tag migration
 │   ├── push.ts           # push subscription helpers
 │   ├── reminders.ts      # reminder permission + subscription flow
 │   ├── store.ts          # state, offline queue, Supabase sync, Realtime

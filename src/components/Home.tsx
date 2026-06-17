@@ -3,7 +3,7 @@ import type { Profile, Task } from '../types';
 import { useStore } from '../lib/useStore';
 import { quickAddTask, clearCompleted, setActiveProfile } from '../lib/store';
 import { parseTags } from '../lib/tags';
-import { tasksForProfile, contextsForProfile, profileName, DEFAULT_PROFILE_NAME } from '../lib/profiles';
+import { tasksForProfile, contextsForProfile, profileName, profileIdByName, DEFAULT_PROFILE_NAME } from '../lib/profiles';
 import { supabase } from '../lib/supabase';
 import { CaptureBar } from './CaptureBar';
 import { FilterBar } from './FilterBar';
@@ -313,6 +313,21 @@ export function Home() {
     if (!hasTasks) return;
     setStickies([ctx.id]);
   }, [loaded, contexts, tasks]);
+
+  // Profile deep-link: `?profile=<name>` switches to that profile by name
+  // (case-insensitive, also matches the Default/"Personal" name). Silently
+  // ignored if no profile matches.
+  const profileLinkHandled = useRef(false);
+  useEffect(() => {
+    if (profileLinkHandled.current || !loaded) return;
+    const name = new URLSearchParams(window.location.search).get('profile');
+    profileLinkHandled.current = true;
+    if (!name) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    const id = profileIdByName(profiles, name);
+    if (id === undefined) return;
+    setActiveProfile(id);
+  }, [loaded, profiles]);
 
   return (
     <div className="mx-auto flex min-h-screen max-w-xl flex-col">

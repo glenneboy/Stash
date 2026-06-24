@@ -111,7 +111,7 @@ export function Home() {
   const [manageOpen, setManageOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [activeSort, setActiveSort] = useState<Sort>({ field: 'date', dir: 'desc' });
+  const [activeSort, setActiveSort] = useState<Sort>({ field: 'due', dir: 'asc' });
   const [completedSort, setCompletedSort] = useState<Sort>({ field: 'date', dir: 'desc' });
   const [customOrders, setCustomOrders] = useState<Record<string, string[]>>(loadCustomOrders);
   const shared = useMemo(readShared, []);
@@ -140,7 +140,7 @@ export function Home() {
   useEffect(() => {
     setActiveSort((prev) => {
       if (customOrders[contextKey]) return { field: 'custom', dir: 'asc' };
-      if (prev.field === 'custom') return { field: 'date', dir: 'desc' };
+      if (prev.field === 'custom') return { field: 'due', dir: 'asc' };
       return prev;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -163,7 +163,7 @@ export function Home() {
           (a, b) => (orderMap.get(a.id) ?? Infinity) - (orderMap.get(b.id) ?? Infinity),
         );
       } else {
-        result = sortTasks(activeTasks, { field: 'date', dir: 'desc' });
+        result = sortTasks(activeTasks, { field: 'due', dir: 'asc' });
       }
     } else {
       result = sortTasks(activeTasks, activeSort);

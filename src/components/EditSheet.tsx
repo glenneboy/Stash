@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Context, Profile, Task } from '../types';
 import { updateTask, deleteTask, setReminder, clearReminder, toggleComplete, moveTaskToProfile } from '../lib/store';
 import { ensurePushSubscription } from '../lib/push';
-import { toLocalInput, fromLocalInput } from '../lib/reminders';
+import { toLocalInput, fromLocalInput, reminderLabel, dueLabel } from '../lib/reminders';
 import { DEFAULT_PROFILE_ID, DEFAULT_PROFILE_NAME, profileOf } from '../lib/profiles';
 
 interface Props {
@@ -163,6 +163,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
               </button>
             )}
           </div>
+          {due && <p className="mt-1.5 text-xs text-muted">{dueLabel(due)}</p>}
         </div>
 
         <div className="mt-3">
@@ -185,6 +186,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
               </button>
             )}
           </div>
+          {reminder && <p className="mt-1.5 text-xs text-muted">{reminderLabel(reminder)}</p>}
           {notifyWarn && (
             <p className="mt-1.5 text-xs text-amber-400">
               Notifications aren't set up — reminder saved, but it won't alert until notifications are allowed on this device.

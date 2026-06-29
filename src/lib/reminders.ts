@@ -23,33 +23,21 @@ export function fromLocalInput(value: string): string {
   return new Date(value).toISOString();
 }
 
-// A datetime-local value (`YYYY-MM-DDTHH:MM`) spelled out with its weekday, so the
-// native OS spinner — which only shows day/month/year — doesn't leave you guessing
-// whether you've landed on a weekday or the weekend. Empty input → ''.
-export function reminderLabel(value: string): string {
+// Short weekday (e.g. "Sat") for a datetime-local value (`YYYY-MM-DDTHH:MM`). The
+// native OS spinner only shows day/month/year, so this sits beside the input to say
+// at a glance whether you've landed on a weekday or the weekend. Empty input → ''.
+export function reminderWeekday(value: string): string {
   if (!value) return '';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString(undefined, {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return d.toLocaleDateString(undefined, { weekday: 'short' });
 }
 
-// A date-only value (`YYYY-MM-DD`) spelled out with its weekday. Parsed from its parts
-// (not `new Date(value)`, which would read it as UTC midnight and can slip a day).
-export function dueLabel(value: string): string {
+// Short weekday (e.g. "Sat") for a date-only value (`YYYY-MM-DD`). Parsed from its
+// parts (not `new Date(value)`, which would read it as UTC midnight and can slip a day).
+export function dueWeekday(value: string): string {
   if (!value) return '';
   const [y, m, d] = value.split('-').map(Number);
   if (!y || !m || !d) return '';
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short' });
 }

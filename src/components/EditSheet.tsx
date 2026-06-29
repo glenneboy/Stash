@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Context, Profile, Task } from '../types';
 import { updateTask, deleteTask, setReminder, clearReminder, toggleComplete, moveTaskToProfile } from '../lib/store';
 import { ensurePushSubscription } from '../lib/push';
-import { toLocalInput, fromLocalInput, reminderLabel, dueLabel } from '../lib/reminders';
+import { toLocalInput, fromLocalInput, reminderWeekday, dueWeekday } from '../lib/reminders';
 import { DEFAULT_PROFILE_ID, DEFAULT_PROFILE_NAME, profileOf } from '../lib/profiles';
 
 interface Props {
@@ -146,12 +146,13 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
         <div className="mt-3">
           <label htmlFor="due-input" className="mb-1 block text-xs text-muted">Due date</label>
           <div className="flex items-center gap-2">
+            <span className="w-9 shrink-0 text-sm text-muted">{dueWeekday(due)}</span>
             <input
               id="due-input"
               type="date"
               value={due}
               onChange={(e) => setDue(e.target.value)}
-              className="flex-1 rounded-xl border border-line bg-bg px-4 py-3 text-base outline-none focus:border-accent"
+              className="w-44 rounded-xl border border-line bg-bg px-4 py-3 text-base outline-none focus:border-accent"
             />
             {due && (
               <button
@@ -163,18 +164,18 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
               </button>
             )}
           </div>
-          {due && <p className="mt-1.5 text-xs text-muted">{dueLabel(due)}</p>}
         </div>
 
         <div className="mt-3">
           <label htmlFor="reminder-input" className="mb-1 block text-xs text-muted">Remind me</label>
           <div className="flex items-center gap-2">
+            <span className="w-9 shrink-0 text-sm text-muted">{reminderWeekday(reminder)}</span>
             <input
               id="reminder-input"
               type="datetime-local"
               value={reminder}
               onChange={(e) => setReminderInput(e.target.value)}
-              className="flex-1 rounded-xl border border-line bg-bg px-4 py-3 text-base outline-none focus:border-accent"
+              className="w-52 rounded-xl border border-line bg-bg px-4 py-3 text-base outline-none focus:border-accent"
             />
             {reminder && (
               <button
@@ -186,7 +187,6 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
               </button>
             )}
           </div>
-          {reminder && <p className="mt-1.5 text-xs text-muted">{reminderLabel(reminder)}</p>}
           {notifyWarn && (
             <p className="mt-1.5 text-xs text-amber-400">
               Notifications aren't set up — reminder saved, but it won't alert until notifications are allowed on this device.

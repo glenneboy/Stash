@@ -20,9 +20,13 @@ export default function App() {
   const { session, ready } = useSession();
 
   useEffect(() => {
+    // Wait for the session check to settle: this effect fires on mount while
+    // session is still null, and resetting there would wipe the offline cache
+    // and pending write queue on every launch.
+    if (!ready) return;
     if (session) void init();
     else reset();
-  }, [session?.user.id]);
+  }, [ready, session?.user.id]);
 
   if (!ready) {
     return (

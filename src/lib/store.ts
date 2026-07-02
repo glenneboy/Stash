@@ -229,13 +229,21 @@ async function fetchAll(): Promise<void> {
   ]);
   if (!tasksRes.error && tasksRes.data) {
     const incoming = tasksRes.data as Task[];
+    const pendingIds = new Set(readQueue().map((op) => ('row' in op ? op.row.id : op.id)));
     // Rows with unflushed local writes keep their optimistic copy — the server snapshot
     // may predate the queued op and would otherwise clobber the pending change.
     const merged = incoming.map((t) => {
-      if (!hasPendingForRow(t.id)) return t;
+      if (!pendingIds.has(t.id)) return t;
       return state.tasks.find((local) => local.id === t.id) ?? t;
     });
-    setTasks(merged);
+    // Tasks created locally whose insert hasn't flushed yet aren't in the server
+    // snapshot at all; keep them so a fetch racing the flush can't make a
+    // just-created task vanish.
+    const incomingIds = new Set(incoming.map((t) => t.id));
+    const pendingLocal = state.tasks.filter((t) => pendingIds.has(t.id) && !incomingIds.has(t.id));
+    setTasks(
+      [...pendingLocal, ...merged].sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    );
   }
   if (!ctxRes.error && ctxRes.data) setContexts(ctxRes.data as Context[]);
   if (!profRes.error && profRes.data) setProfiles(profRes.data as Profile[]);

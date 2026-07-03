@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Context, Profile, Task } from '../types';
+import type { Context, Profile, Recurrence, Task } from '../types';
 import { updateTask, deleteTask, setReminder, clearReminder, toggleComplete, moveTaskToProfile } from '../lib/store';
 import { ensurePushSubscription } from '../lib/push';
 import { toLocalInput, fromLocalInput, reminderWeekday, dueWeekday } from '../lib/reminders';
@@ -19,6 +19,13 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
   const [due, setDue] = useState(task.due_on ?? '');
   const [reminder, setReminderInput] = useState(toLocalInput(task.reminder_at));
   const [notifyWarn, setNotifyWarn] = useState(false);
+  // 'custom' shows the every-N picker; presets map straight to a rule.
+  const [repeat, setRepeat] = useState<'none' | 'day' | 'week' | 'month' | 'custom'>(() => {
+    if (!task.recur) return 'none';
+    return task.recur.interval === 1 ? task.recur.unit : 'custom';
+  });
+  const [customN, setCustomN] = useState(task.recur?.interval ?? 2);
+  const [customUnit, setCustomUnit] = useState<Recurrence['unit']>(task.recur?.unit ?? 'week');
   const [moveOpen, setMoveOpen] = useState(false);
 
   // Every profile the task could move to: the Default ("Personal") bucket plus each
@@ -37,13 +44,20 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
 
+  // The rule the current picker state represents (null = doesn't repeat).
+  function recurRule(): Recurrence | null {
+    if (repeat === 'none') return null;
+    if (repeat === 'custom') return { unit: customUnit, interval: Math.max(1, Math.floor(customN) || 1) };
+    return { unit: repeat, interval: 1 };
+  }
+
   function toggleTag(id: string) {
     setTags((t) => (t.includes(id) ? t.filter((x) => x !== id) : [...t, id]));
   }
 
   async function save() {
     if (!title.trim()) return;
-    updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags, due_on: due || null });
+    updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags, due_on: due || null, recur: recurRule() });
 
     const nextIso = reminder ? fromLocalInput(reminder) : null;
     const reminderChanged =
@@ -75,7 +89,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
   // The move surfaces its own "Moved to … · Undo" toast, so we just close here.
   function move(targetId: string | null) {
     if (title.trim()) {
-      updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags, due_on: due || null });
+      updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags, due_on: due || null, recur: recurRule() });
     }
     moveTaskToProfile(task.id, targetId);
     onClose();
@@ -84,7 +98,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
   // Completing from the sheet keeps any unsaved edits, then closes.
   function complete() {
     if (title.trim()) {
-      updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags, due_on: due || null });
+      updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags, due_on: due || null, recur: recurRule() });
     }
     toggleComplete(task.id);
     onClose();
@@ -164,6 +178,53 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
               </button>
             )}
           </div>
+        </div>
+
+        <div className="mt-3">
+          <label htmlFor="repeat-input" className="mb-1 block text-xs text-muted">Repeat</label>
+          <div className="flex items-center gap-2">
+            <select
+              id="repeat-input"
+              value={repeat}
+              onChange={(e) => setRepeat(e.target.value as typeof repeat)}
+              className="w-44 rounded-xl border border-line bg-bg px-4 py-3 text-base outline-none focus:border-accent"
+            >
+              <option value="none">Doesn't repeat</option>
+              <option value="day">Daily</option>
+              <option value="week">Weekly</option>
+              <option value="month">Monthly</option>
+              <option value="custom">Custom…</option>
+            </select>
+            {repeat === 'custom' && (
+              <>
+                <span className="text-sm text-muted">every</span>
+                <input
+                  type="number"
+                  min={1}
+                  inputMode="numeric"
+                  value={customN}
+                  onChange={(e) => setCustomN(Number(e.target.value))}
+                  aria-label="Repeat every N"
+                  className="w-16 rounded-xl border border-line bg-bg px-3 py-3 text-base outline-none focus:border-accent"
+                />
+                <select
+                  value={customUnit}
+                  onChange={(e) => setCustomUnit(e.target.value as Recurrence['unit'])}
+                  aria-label="Repeat unit"
+                  className="rounded-xl border border-line bg-bg px-3 py-3 text-base outline-none focus:border-accent"
+                >
+                  <option value="day">days</option>
+                  <option value="week">weeks</option>
+                  <option value="month">months</option>
+                </select>
+              </>
+            )}
+          </div>
+          {repeat !== 'none' && (
+            <p className="mt-1.5 text-xs text-muted">
+              Completing this task will add the next occurrence automatically.
+            </p>
+          )}
         </div>
 
         <div className="mt-3">

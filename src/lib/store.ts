@@ -3,6 +3,7 @@ import { supabase } from './supabase';
 import type { Context, Profile, Task } from '../types';
 import { planContextMigration, profileName } from './profiles';
 import { parseNaturalDate } from './dates';
+import { nextOccurrence } from './recur';
 
 // ── Persisted state shape ────────────────────────────────────
 interface Toast {
@@ -397,6 +398,7 @@ export function createTask(title: string, contexts: string[], note?: string, due
     reminder_at: null,
     notify_next_at: null,
     notify_stage: 0,
+    recur: null,
     // New tasks land in the profile currently being viewed (null = Default).
     profile_id: state.activeProfileId,
   };
@@ -412,7 +414,7 @@ export function quickAddTask(title: string, contexts: string[]): void {
   showToast('Added', () => deleteTask(id));
 }
 
-export function updateTask(id: string, patch: Partial<Pick<Task, 'title' | 'note' | 'contexts' | 'due_on'>>): void {
+export function updateTask(id: string, patch: Partial<Pick<Task, 'title' | 'note' | 'contexts' | 'due_on' | 'recur'>>): void {
   setTasks(state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   enqueue({ kind: 'task.update', id, patch });
 }
@@ -485,10 +487,33 @@ export function toggleComplete(id: string): void {
   }
   setTasks(state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   enqueue({ kind: 'task.update', id, patch });
-  if (completed) {
-    navigator.vibrate?.(15);
-    showToast('Completed', () => toggleComplete(id));
+  if (!completed) return;
+
+  navigator.vibrate?.(15);
+
+  // Recurring tasks spawn their next occurrence on completion — the ticked-off
+  // row stays in Done as a record, and a fresh task appears with the advanced
+  // due date. Undo removes the spawned occurrence and un-checks the original.
+  if (task.recur) {
+    const next = nextOccurrence(task, crypto.randomUUID());
+    setTasks(
+      [next, ...state.tasks].sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    );
+    enqueue({ kind: 'task.insert', row: next });
+    const nextDay = new Date(`${next.due_on}T00:00:00`).toLocaleDateString(undefined, {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+    });
+    showToast(`Completed · next ${nextDay}`, () => {
+      deleteTask(next.id);
+      dismissToast(); // deleteTask's own "Deleted" toast would mask this undo
+      toggleComplete(id);
+    });
+    return;
   }
+
+  showToast('Completed', () => toggleComplete(id));
 }
 
 export function clearCompleted(cleared: Task[]): void {

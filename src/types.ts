@@ -15,6 +15,13 @@ export interface Context {
   profile_id: string | null;
 }
 
+// How a task repeats. Completing a recurring task spawns the next occurrence
+// (due date advanced by the rule) instead of the task being ticked off forever.
+export interface Recurrence {
+  unit: 'day' | 'week' | 'month';
+  interval: number; // >= 1; e.g. { unit: 'week', interval: 2 } = fortnightly
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -27,6 +34,8 @@ export interface Task {
   reminder_at: string | null;
   notify_next_at: string | null;
   notify_stage: number;
+  // null/absent => not recurring.
+  recur: Recurrence | null;
   // null/absent => the implicit Default profile.
   profile_id: string | null;
 }

@@ -34,6 +34,10 @@ create index if not exists tasks_contexts_idx on public.tasks using gin (context
 -- due_on: optional calendar day a task is due (drives the urgency badge in the UI).
 alter table public.tasks add column if not exists due_on date;
 
+-- recur: optional repeat rule as jsonb, e.g. {"unit":"week","interval":1}.
+-- On completion the client inserts the next occurrence (due date advanced).
+alter table public.tasks add column if not exists recur jsonb;
+
 -- ── Reminders (scheduled web push) ──────────────────────────
 -- reminder_at  : user-set instant the task first notifies (absolute UTC).
 -- notify_next_at: next instant the cron should fire (null = nothing pending).

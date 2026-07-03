@@ -2,6 +2,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import type { Context, Profile, Task } from '../types';
 import { planContextMigration, profileName } from './profiles';
+import { parseNaturalDate } from './dates';
 
 // ── Persisted state shape ────────────────────────────────────
 interface Toast {
@@ -383,7 +384,7 @@ export function reset(): void {
 }
 
 // ── Public mutations (optimistic) ────────────────────────────
-export function createTask(title: string, contexts: string[], note?: string): string {
+export function createTask(title: string, contexts: string[], note?: string, dueOn?: string | null): string {
   const row: Task = {
     id: crypto.randomUUID(),
     title: title.trim(),
@@ -392,7 +393,7 @@ export function createTask(title: string, contexts: string[], note?: string): st
     completed: false,
     created_at: new Date().toISOString(),
     completed_at: null,
-    due_on: null,
+    due_on: dueOn ?? null,
     reminder_at: null,
     notify_next_at: null,
     notify_stage: 0,
@@ -406,7 +407,8 @@ export function createTask(title: string, contexts: string[], note?: string): st
 
 // Quick-capture entry point (deeplink): create a task and confirm with an undo toast.
 export function quickAddTask(title: string, contexts: string[]): void {
-  const id = createTask(title, contexts);
+  const { title: cleaned, dueOn } = parseNaturalDate(title);
+  const id = createTask(cleaned, contexts, undefined, dueOn);
   showToast('Added', () => deleteTask(id));
 }
 

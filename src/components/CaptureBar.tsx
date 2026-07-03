@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Context } from '../types';
 import { createTask } from '../lib/store';
 import { parseTags } from '../lib/tags';
+import { parseNaturalDate } from '../lib/dates';
 
 interface Props {
   contexts: Context[];
@@ -31,8 +32,9 @@ export function CaptureBar({ contexts, activeContextIds, initialTitle = '', init
     e.preventDefault();
     const { title: parsedTitle, tagIds } = parseTags(title, contexts);
     if (!parsedTitle) return;
+    const { title: cleanTitle, dueOn } = parseNaturalDate(parsedTitle);
     const merged = [...new Set([...tags, ...tagIds])];
-    createTask(parsedTitle, merged, note);
+    createTask(cleanTitle, merged, note, dueOn);
     setTitle('');
     setNote('');
     setTags(activeContextIds);

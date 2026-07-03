@@ -160,6 +160,21 @@ export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOve
         <button onClick={() => onEdit(task)} className="min-w-0 flex-1 text-left">
           <p className={`flex items-center gap-1.5 break-words ${task.completed ? 'text-muted line-through' : ''}`}>
             <span className="min-w-0">{task.title}</span>
+            {task.recur && (
+              <svg
+                viewBox="0 0 24 24"
+                aria-label="Repeats"
+                className="h-3.5 w-3.5 shrink-0 text-muted"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M17 2l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M3 11v-1a4 4 0 014-4h14" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M7 22l-4-4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M21 13v1a4 4 0 01-4 4H3" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
             {hasReminder(task) && (
               <svg
                 viewBox="0 0 24 24"

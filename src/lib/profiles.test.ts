@@ -23,6 +23,7 @@ function task(id: string, profile_id: string | null): Task {
     reminder_at: null,
     notify_next_at: null,
     notify_stage: 0,
+    recur: null,
     profile_id,
   };
 }

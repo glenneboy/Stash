@@ -11,6 +11,7 @@ import { TaskItem } from './TaskItem';
 import { EditSheet } from './EditSheet';
 import { ContextManager } from './ContextManager';
 import { ProfileManager } from './ProfileManager';
+import { ExportSheet } from './ExportSheet';
 import { Toast } from './Toast';
 
 /** Intersection: a task matches only if it carries every selected context. Empty = all. */
@@ -102,6 +103,7 @@ export function Home() {
     [rawContexts, activeProfileId],
   );
   const [profileManageOpen, setProfileManageOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   // Filter view: any number of sticky contexts (long-pressed) plus at most one transient
   // (quick-tapped). The visible list is the intersection of all selected contexts.
   const [stickies, setStickies] = useState<string[]>([]);
@@ -352,6 +354,12 @@ export function Home() {
               <path d="M21 21l-4.3-4.3" strokeLinecap="round" />
             </svg>
           </button>
+          <button onClick={() => setExportOpen(true)} aria-label="Export">
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 3v12M12 3l-4 4M12 3l4 4" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
           <button onClick={() => supabase.auth.signOut()} className="underline">
             Sign out
           </button>
@@ -453,6 +461,14 @@ export function Home() {
       )}
       {manageOpen && <ContextManager contexts={contexts} onClose={() => setManageOpen(false)} />}
       {profileManageOpen && <ProfileManager profiles={profiles} onClose={() => setProfileManageOpen(false)} />}
+      {exportOpen && (
+        <ExportSheet
+          profileName={profileName(profiles, activeProfileId)}
+          tasks={tasks}
+          contexts={contexts}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
       <Toast />
     </div>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Context, Profile, Recurrence, Task } from '../types';
 import { updateTask, deleteTask, setReminder, clearReminder, toggleComplete, moveTaskToProfile, createContext } from '../lib/store';
 import { ensurePushSubscription } from '../lib/push';
@@ -48,6 +48,16 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
   const [moveOpen, setMoveOpen] = useState(false);
   const [addingContext, setAddingContext] = useState(false);
   const [newContextName, setNewContextName] = useState('');
+  const dueInputRef = useRef<HTMLInputElement>(null);
+  const reminderInputRef = useRef<HTMLInputElement>(null);
+
+  // Desktop browsers only auto-open a date/datetime-local picker when the click
+  // lands on the input's own calendar-icon hit-zone, not anywhere in its box like
+  // mobile does. Since these inputs are stretched invisibly under a label, force
+  // the picker open explicitly so clicking anywhere on the pill works everywhere.
+  function openPicker(ref: React.RefObject<HTMLInputElement | null>) {
+    ref.current?.showPicker?.();
+  }
 
   const repeatActive = repeat !== 'none';
   const repeatLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly' } as const;
@@ -202,6 +212,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
               <div className="flex flex-wrap items-center gap-2">
                 {/* Due pill — the native picker sits invisibly on top so a tap opens it */}
                 <label
+                  onClick={() => openPicker(dueInputRef)}
                   className={`relative inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-2 text-[13px] font-medium transition ${
                     due
                       ? 'border border-accent/40 bg-accent/[0.13] text-[#f0a888]'
@@ -214,6 +225,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
                   </svg>
                   {due ? dueLabel(due) : 'Due date'}
                   <input
+                    ref={dueInputRef}
                     type="date"
                     aria-label="Due date"
                     value={due}
@@ -224,6 +236,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
                     <button
                       onClick={(e) => {
                         e.preventDefault();
+                        e.stopPropagation();
                         setDue('');
                       }}
                       aria-label="Clear due date"
@@ -236,6 +249,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
 
                 {/* Remind pill */}
                 <label
+                  onClick={() => openPicker(reminderInputRef)}
                   className={`relative inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-2 text-[13px] font-medium transition ${
                     reminder
                       ? 'border border-white/10 bg-white/5 text-[#d3cec9]'
@@ -247,6 +261,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
                   </svg>
                   {reminder ? remindLabel(reminder) : 'Add reminder'}
                   <input
+                    ref={reminderInputRef}
                     type="datetime-local"
                     aria-label="Remind me"
                     value={reminder}
@@ -257,6 +272,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
                     <button
                       onClick={(e) => {
                         e.preventDefault();
+                        e.stopPropagation();
                         setReminderInput('');
                       }}
                       aria-label="Clear reminder"

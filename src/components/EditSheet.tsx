@@ -196,7 +196,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
                     <rect x="3" y="5" width="18" height="16" rx="2" />
                     <path d="M8 3v4M16 3v4M3 10h18" strokeLinecap="round" />
                   </svg>
-                  {due ? dueLabel(due) : 'Add date'}
+                  {due ? dueLabel(due) : 'Due date'}
                   <input
                     type="date"
                     aria-label="Due date"

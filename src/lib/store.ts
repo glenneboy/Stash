@@ -543,7 +543,7 @@ function restoreTask(task: Task): void {
   enqueue({ kind: 'task.insert', row: task });
 }
 
-export function createContext(name: string): void {
+export function createContext(name: string): Context {
   const row: Context = {
     id: crypto.randomUUID(),
     name: name.trim(),
@@ -553,6 +553,7 @@ export function createContext(name: string): void {
   };
   setContexts([...state.contexts, row]);
   enqueue({ kind: 'context.insert', row });
+  return row;
 }
 
 export function renameContext(id: string, name: string): void {

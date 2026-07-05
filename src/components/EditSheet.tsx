@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Context, Profile, Recurrence, Task } from '../types';
-import { updateTask, deleteTask, setReminder, clearReminder, toggleComplete, moveTaskToProfile } from '../lib/store';
+import { updateTask, deleteTask, setReminder, clearReminder, toggleComplete, moveTaskToProfile, createContext } from '../lib/store';
 import { ensurePushSubscription } from '../lib/push';
 import { toLocalInput, fromLocalInput } from '../lib/reminders';
 import { DEFAULT_PROFILE_ID, DEFAULT_PROFILE_NAME, profileOf } from '../lib/profiles';
@@ -46,6 +46,8 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
   const [customUnit, setCustomUnit] = useState<Recurrence['unit']>(task.recur?.unit ?? 'week');
   const [repeatOpen, setRepeatOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [addingContext, setAddingContext] = useState(false);
+  const [newContextName, setNewContextName] = useState('');
 
   const repeatActive = repeat !== 'none';
   const repeatLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly' } as const;
@@ -85,6 +87,20 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
 
   function toggleTag(id: string) {
     setTags((t) => (t.includes(id) ? t.filter((x) => x !== id) : [...t, id]));
+  }
+
+  // Creates the context (or reuses a same-named one) and tags this task with it.
+  function addContext() {
+    const name = newContextName.trim();
+    if (!name) {
+      setAddingContext(false);
+      return;
+    }
+    const existing = contexts.find((c) => c.name.toLowerCase() === name.toLowerCase());
+    const ctx = existing ?? createContext(name);
+    setTags((t) => (t.includes(ctx.id) ? t : [...t, ctx.id]));
+    setNewContextName('');
+    setAddingContext(false);
   }
 
   async function save() {
@@ -338,25 +354,65 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
           <div className="min-w-0 sm:flex-1">
             <span className={SECTION_LABEL}>Organise</span>
             <div className={`${CARD} px-4 py-3.5`}>
-              {contexts.length > 0 && (
-                <div className="mb-3.5 flex flex-wrap gap-2">
-                  {contexts.map((c) => (
+              <div className="mb-3.5 flex flex-wrap items-center gap-2">
+                {contexts.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => toggleTag(c.id)}
+                    className={`rounded-full border px-3 py-1.5 text-[13px] transition ${
+                      tags.includes(c.id)
+                        ? 'border-accent bg-accent/[0.14] font-medium text-accent'
+                        : 'border-white/[0.12] text-[#b3ada7]'
+                    }`}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+                {addingContext ? (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      addContext();
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/[0.08] py-1 pl-3 pr-1"
+                  >
+                    <input
+                      autoFocus
+                      value={newContextName}
+                      onChange={(e) => setNewContextName(e.target.value)}
+                      onBlur={() => {
+                        if (!newContextName.trim()) setAddingContext(false);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          setAddingContext(false);
+                          setNewContextName('');
+                        }
+                      }}
+                      placeholder="New context"
+                      className="w-24 bg-transparent text-[13px] outline-none placeholder:text-muted"
+                    />
                     <button
-                      key={c.id}
-                      onClick={() => toggleTag(c.id)}
-                      className={`rounded-full border px-3 py-1.5 text-[13px] transition ${
-                        tags.includes(c.id)
-                          ? 'border-accent bg-accent/[0.14] font-medium text-accent'
-                          : 'border-white/[0.12] text-[#b3ada7]'
-                      }`}
+                      type="submit"
+                      disabled={!newContextName.trim()}
+                      aria-label="Add context"
+                      className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-accent disabled:opacity-30"
                     >
-                      {c.name}
+                      ✓
                     </button>
-                  ))}
-                </div>
-              )}
+                  </form>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setAddingContext(true)}
+                    className="rounded-full border border-dashed border-white/[0.18] px-3 py-1.5 text-[13px] text-muted"
+                  >
+                    + New
+                  </button>
+                )}
+              </div>
               {moveTargets.length > 0 && (
-                <div className={contexts.length > 0 ? 'border-t border-white/5 pt-3' : ''}>
+                <div className="border-t border-white/5 pt-3">
                   <button
                     type="button"
                     onClick={() => setMoveOpen((o) => !o)}

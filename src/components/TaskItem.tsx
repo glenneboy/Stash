@@ -17,11 +17,13 @@ interface Props {
   dragGrip?: DragGrip;
   isDragging?: boolean;
   dragOver?: 'above' | 'below';
+  /** True right after this task was created, to briefly highlight it in the list. */
+  justAdded?: boolean;
 }
 
 const SWIPE_THRESHOLD = 80;
 
-export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOver }: Props) {
+export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOver, justAdded }: Props) {
   const tags = task.contexts
     .map((id) => contexts.find((c) => c.id === id)?.name)
     .filter((n): n is string => Boolean(n));
@@ -45,6 +47,15 @@ export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOve
     }
     wasCompleted.current = task.completed;
   }, [task.completed]);
+
+  // Briefly highlight a task right after it's added, then let the animation clear itself.
+  const [highlight, setHighlight] = useState(false);
+  useEffect(() => {
+    if (!justAdded) return;
+    setHighlight(true);
+    const id = setTimeout(() => setHighlight(false), 1200);
+    return () => clearTimeout(id);
+  }, [justAdded]);
 
   function onPointerDown(e: React.PointerEvent) {
     start.current = { x: e.clientX, y: e.clientY };
@@ -112,7 +123,7 @@ export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOve
       </div>
 
       <div
-        className="relative flex touch-pan-y select-none items-start gap-3 bg-bg px-4 py-3"
+        className={`relative flex touch-pan-y select-none items-start gap-3 bg-bg px-4 py-3 ${highlight ? 'animate-task-highlight' : ''}`}
         style={{ transform: `translateX(${dx}px)`, transition: dx === 0 ? 'transform 150ms ease-out' : 'none' }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}

@@ -12,9 +12,11 @@ interface Props {
   initialTitle?: string;
   /** Full shared detail, prefilled into the note (revealed when present). */
   initialNote?: string;
+  /** Called with the new task's id right after it's created, so the list can scroll to it. */
+  onCreated?: (id: string) => void;
 }
 
-export function CaptureBar({ contexts, activeContextIds, initialTitle = '', initialNote = '' }: Props) {
+export function CaptureBar({ contexts, activeContextIds, initialTitle = '', initialNote = '', onCreated }: Props) {
   const [title, setTitle] = useState(initialTitle);
   const [note, setNote] = useState(initialNote);
   const [tags, setTags] = useState<string[]>(activeContextIds);
@@ -34,7 +36,8 @@ export function CaptureBar({ contexts, activeContextIds, initialTitle = '', init
     if (!parsedTitle) return;
     const { title: cleanTitle, dueOn } = parseNaturalDate(parsedTitle);
     const merged = [...new Set([...tags, ...tagIds])];
-    createTask(cleanTitle, merged, note, dueOn);
+    const id = createTask(cleanTitle, merged, note, dueOn);
+    onCreated?.(id);
     setTitle('');
     setNote('');
     setTags(activeContextIds);

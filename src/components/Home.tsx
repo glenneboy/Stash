@@ -130,6 +130,17 @@ export function Home() {
   // Always-fresh reference to the current active list for use in event handlers.
   const activeRef = useRef<Task[]>([]);
 
+  // Scroll to and briefly highlight a task just created via the capture bar.
+  // Stays null (no scroll/highlight) if the new task doesn't match the active filter.
+  const [justAddedId, setJustAddedId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!justAddedId) return;
+    const el = listRef.current?.querySelector<HTMLElement>(`li[data-task-id="${justAddedId}"]`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const id = setTimeout(() => setJustAddedId(null), 1200);
+    return () => clearTimeout(id);
+  }, [justAddedId]);
+
   const selected = useMemo(
     () => (transient && !stickies.includes(transient) ? [...stickies, transient] : stickies),
     [stickies, transient],
@@ -371,6 +382,7 @@ export function Home() {
         activeContextIds={selected}
         initialTitle={shared.title}
         initialNote={shared.note}
+        onCreated={setJustAddedId}
       />
       <FilterBar
         contexts={contexts}
@@ -418,6 +430,7 @@ export function Home() {
                   task={t}
                   contexts={contexts}
                   onEdit={setEditing}
+                  justAdded={t.id === justAddedId}
                   isDragging={drag?.id === t.id}
                   dragOver={drag?.overId === t.id ? (drag.before ? 'above' : 'below') : undefined}
                   dragGrip={dragEnabled ? {

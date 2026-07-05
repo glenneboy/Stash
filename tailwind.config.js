@@ -21,9 +21,14 @@ export default {
           '40%': { transform: 'scale(1.3)' },
           '100%': { transform: 'scale(1)' },
         },
+        'task-highlight': {
+          '0%': { backgroundColor: 'rgba(240, 101, 58, 0.18)' },
+          '100%': { backgroundColor: 'rgba(240, 101, 58, 0)' },
+        },
       },
       animation: {
         pop: 'pop 250ms ease-out',
+        'task-highlight': 'task-highlight 1.2s ease-out',
       },
     },
   },

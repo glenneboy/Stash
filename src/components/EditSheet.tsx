@@ -59,6 +59,28 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
     ref.current?.showPicker?.();
   }
 
+  // Opening an empty due/reminder picker seeds it from the other field (when set)
+  // instead of today, so picking one date after the other doesn't mean re-typing it.
+  // The ref's value is written directly too: state updates don't reach the DOM until
+  // after this handler returns, and showPicker() needs the seeded value immediately.
+  function openDuePicker() {
+    if (!due && reminder) {
+      const seed = reminder.slice(0, 10);
+      setDue(seed);
+      if (dueInputRef.current) dueInputRef.current.value = seed;
+    }
+    openPicker(dueInputRef);
+  }
+
+  function openReminderPicker() {
+    if (!reminder && due) {
+      const seed = `${due}T09:00`;
+      setReminderInput(seed);
+      if (reminderInputRef.current) reminderInputRef.current.value = seed;
+    }
+    openPicker(reminderInputRef);
+  }
+
   const repeatActive = repeat !== 'none';
   const repeatLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly' } as const;
   const repeatLabel =
@@ -212,7 +234,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
               <div className="flex flex-wrap items-center gap-2">
                 {/* Due pill — the native picker sits invisibly on top so a tap opens it */}
                 <label
-                  onClick={() => openPicker(dueInputRef)}
+                  onClick={openDuePicker}
                   className={`relative inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-2 text-[13px] font-medium transition ${
                     due
                       ? 'border border-accent/40 bg-accent/[0.13] text-[#f0a888]'
@@ -249,7 +271,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
 
                 {/* Remind pill */}
                 <label
-                  onClick={() => openPicker(reminderInputRef)}
+                  onClick={openReminderPicker}
                   className={`relative inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-2 text-[13px] font-medium transition ${
                     reminder
                       ? 'border border-white/10 bg-white/5 text-[#d3cec9]'

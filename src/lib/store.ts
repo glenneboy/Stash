@@ -404,6 +404,10 @@ function applyRemoteProfile(event: string, next: Profile | null, prevId: string 
     setTasks(state.tasks.filter((t) => t.profile_id !== id));
     setContexts(state.contexts.filter((c) => c.profile_id !== id));
     setProfiles(state.profiles.filter((p) => p.id !== id));
+    // Memberships cascade with the profile server-side; mirror that here and let go
+    // of the profile's realtime channel.
+    setMembers(state.members.filter((m) => m.profile_id !== id));
+    syncSharedChannels();
     return;
   }
   if (!next) return;
@@ -473,6 +477,9 @@ function sharedProfileIds(): string[] {
 // every fetch and every membership change; removing the channels that are no longer
 // wanted is what stops them leaking as invites come and go.
 function syncSharedChannels(): void {
+  // Realtime isn't up yet (first fetch runs before subscribe, and there is nothing
+  // to subscribe to while signed out); subscribeRealtime will reconcile.
+  if (!channel) return;
   const wanted = new Set(sharedProfileIds());
   for (const [id, ch] of sharedChannels) {
     if (wanted.has(id)) continue;

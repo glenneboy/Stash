@@ -171,6 +171,13 @@ end $$;
 create table if not exists public.profile_members (
   id          uuid primary key default gen_random_uuid(),
   profile_id  uuid not null references public.profiles (id) on delete cascade,
+  -- Denormalised copy of profiles.name, stamped by trigger and kept fresh on rename.
+  -- A pending invitee cannot read the profiles row — deliberately, so an unaccepted
+  -- profile can never surface in their switcher — but the invite card still has to
+  -- name what they were invited to. Copying the name here is the smallest thing that
+  -- gives them that: it is readable by exactly whoever could already read this
+  -- membership row, so it discloses nothing beyond the invite they were sent.
+  profile_name text not null,
   email       text not null,
   user_id     uuid references auth.users (id) on delete cascade,
   status      text not null default 'pending' check (status in ('pending', 'accepted')),
@@ -183,6 +190,20 @@ create table if not exists public.profile_members (
 create index if not exists profile_members_profile_id_idx on public.profile_members (profile_id);
 create index if not exists profile_members_user_id_idx    on public.profile_members (user_id);
 create index if not exists profile_members_email_idx      on public.profile_members (email);
+
+-- profile_name was added after the table shipped. Add it nullable, backfill from
+-- profiles, then tighten to NOT NULL — that sequence is correct whether the table is
+-- empty (as it is in production, where sharing has never been used) or already holds
+-- invites, and it is a no-op on a fresh install where the column is already declared.
+alter table public.profile_members add column if not exists profile_name text;
+
+update public.profile_members m
+   set profile_name = p.name
+  from public.profiles p
+ where p.id = m.profile_id
+   and m.profile_name is null;
+
+alter table public.profile_members alter column profile_name set not null;
 
 -- Normalise on the way in rather than rejecting a mis-cased email: the client
 -- normalises too, but the uniqueness guarantee has to hold whatever writes the row
@@ -201,6 +222,49 @@ drop trigger if exists profile_members_normalize_email on public.profile_members
 create trigger profile_members_normalize_email
   before insert or update on public.profile_members
   for each row execute function public.normalize_member_email();
+
+-- Stamp the profile's name onto the invite. SECURITY DEFINER rather than a plain
+-- lookup so it does not depend on the caller's RLS — the insert policy has already
+-- established that the caller owns the profile by the time this runs.
+create or replace function public.stamp_member_profile_name()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  select name into new.profile_name from public.profiles where id = new.profile_id;
+  return new;
+end;
+$$;
+
+drop trigger if exists profile_members_stamp_profile_name on public.profile_members;
+create trigger profile_members_stamp_profile_name
+  before insert on public.profile_members
+  for each row execute function public.stamp_member_profile_name();
+
+-- A rename would otherwise strand every invite and membership on the old name.
+-- Definer because there is no UPDATE policy on profile_members for anyone, owner
+-- included — accepting is the only sanctioned mutation, and it goes through the RPC.
+create or replace function public.sync_member_profile_name()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  update public.profile_members
+     set profile_name = new.name
+   where profile_id = new.id;
+  return null;
+end;
+$$;
+
+drop trigger if exists profiles_sync_member_profile_name on public.profiles;
+create trigger profiles_sync_member_profile_name
+  after update on public.profiles
+  for each row when (new.name is distinct from old.name)
+  execute function public.sync_member_profile_name();
 
 -- ── RLS helpers (SECURITY DEFINER — see header) ─────────────
 

@@ -9,9 +9,13 @@ export function Toast() {
     <div className="safe-bottom pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-4">
       <div className="pointer-events-auto flex items-center gap-4 rounded-xl border border-line bg-elevated px-4 py-3 shadow-lg">
         <span className="text-sm">{toast.message}</span>
-        <button onClick={runUndo} className="text-sm font-medium text-accent">
-          Undo
-        </button>
+        {/* Error/notice toasts carry no undo action — showing an inert "Undo" would
+            invite a tap that does nothing. */}
+        {toast.undo && (
+          <button onClick={runUndo} className="text-sm font-medium text-accent">
+            Undo
+          </button>
+        )}
         <button onClick={dismissToast} aria-label="Dismiss" className="text-muted">
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M6 6l12 12M6 18L18 6" strokeLinecap="round" />

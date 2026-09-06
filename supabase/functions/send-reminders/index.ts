@@ -24,6 +24,7 @@ const admin = createClient(
 interface DueTask {
   id: string;
   user_id: string;
+  profile_id: string | null;
   title: string;
   reminder_at: string;
   notify_stage: number;
@@ -46,7 +47,7 @@ Deno.serve(async (req) => {
   const nowIso = new Date().toISOString();
   const { data: due, error } = await admin
     .from('tasks')
-    .select('id, user_id, title, reminder_at, notify_stage')
+    .select('id, user_id, profile_id, title, reminder_at, notify_stage')
     .eq('completed', false)
     .not('notify_next_at', 'is', null)
     .lte('notify_next_at', nowIso)
@@ -54,7 +55,37 @@ Deno.serve(async (req) => {
   if (error) return new Response(error.message, { status: 500 });
   if (!due || due.length === 0) return new Response(JSON.stringify({ sent: 0 }), { status: 200 });
 
-  const userIds = [...new Set(due.map((t) => t.user_id))];
+  // Fan-out for shared profiles. Under owner-owns-everything, task.user_id is always
+  // the profile OWNER — so it alone would buzz only Glenn and never his wife. Resolve
+  // the accepted members of every profile in this batch in one query (household scale,
+  // but per-task lookups would still be silly) and notify owner + members.
+  // A task with a null profile_id is Personal: nobody else can ever see it, so it keeps
+  // exactly today's behaviour of notifying its owner and no one else.
+  const profileIds = [...new Set(due.map((t) => t.profile_id).filter((p): p is string => !!p))];
+  const membersByProfile = new Map<string, string[]>();
+  if (profileIds.length > 0) {
+    const { data: members, error: membersError } = await admin
+      .from('profile_members')
+      .select('profile_id, user_id')
+      .in('profile_id', profileIds)
+      .eq('status', 'accepted')
+      .not('user_id', 'is', null)
+      .returns<{ profile_id: string; user_id: string }[]>();
+    if (membersError) console.error('failed to load profile members', membersError.message);
+    for (const m of members ?? []) {
+      const list = membersByProfile.get(m.profile_id) ?? [];
+      list.push(m.user_id);
+      membersByProfile.set(m.profile_id, list);
+    }
+  }
+
+  // Owner first, then accepted members; deduped so an odd row can't double-buzz anyone.
+  const recipientsOf = (task: DueTask): string[] =>
+    task.profile_id
+      ? [...new Set([task.user_id, ...(membersByProfile.get(task.profile_id) ?? [])])]
+      : [task.user_id];
+
+  const userIds = [...new Set(due.flatMap(recipientsOf))];
   const { data: subs, error: subsError } = await admin
     .from('push_subscriptions')
     .select('user_id, endpoint, p256dh, auth')
@@ -72,7 +103,8 @@ Deno.serve(async (req) => {
   let sent = 0;
   for (const task of due) {
     const payload = JSON.stringify({ title: 'Reminder', body: task.title, taskId: task.id });
-    for (const sub of subsByUser.get(task.user_id) ?? []) {
+    const taskSubs = recipientsOf(task).flatMap((uid) => subsByUser.get(uid) ?? []);
+    for (const sub of taskSubs) {
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },

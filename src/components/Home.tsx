@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Profile, Task } from '../types';
+import type { Profile, ProfileMember, Task } from '../types';
 import { useStore } from '../lib/useStore';
-import { quickAddTask, clearCompleted, setActiveProfile } from '../lib/store';
+import { quickAddTask, clearCompleted, setActiveProfile, acceptInvite, rejectInvite } from '../lib/store';
 import { parseTags } from '../lib/tags';
-import { tasksForProfile, contextsForProfile, profileName, profileIdByName, DEFAULT_PROFILE_NAME } from '../lib/profiles';
+import { pendingInvitesFor } from '../lib/sharing';
+import {
+  tasksForProfile,
+  contextsForProfile,
+  profileName,
+  profileIdByName,
+  isProfileShared,
+  DEFAULT_PROFILE_NAME,
+} from '../lib/profiles';
 import { supabase } from '../lib/supabase';
 import { CaptureBar } from './CaptureBar';
 import { FilterBar } from './FilterBar';
@@ -93,8 +101,19 @@ interface DragState {
 }
 
 export function Home() {
-  const { tasks: allTasks, contexts: rawContexts, profiles, activeProfileId, online, syncing, pending, loaded } =
-    useStore();
+  const {
+    tasks: allTasks,
+    contexts: rawContexts,
+    profiles,
+    members,
+    userId,
+    userEmail,
+    activeProfileId,
+    online,
+    syncing,
+    pending,
+    loaded,
+  } = useStore();
   // Everything below operates on just the active profile's slice — switching
   // profiles swaps to a completely separate set of tasks and tags.
   const tasks = useMemo(() => tasksForProfile(allTasks, activeProfileId), [allTasks, activeProfileId]);
@@ -326,16 +345,23 @@ export function Home() {
     profileLinkHandled.current = true;
     if (!name) return;
     window.history.replaceState({}, '', window.location.pathname);
-    const id = profileIdByName(profiles, name);
+    const id = profileIdByName(profiles, name, userId);
     if (id === undefined) return;
     setActiveProfile(id);
-  }, [loaded, profiles]);
+  }, [loaded, profiles, userId]);
+
+  // Invites addressed to me, not yet accepted — surfaced as cards right at the top
+  // of the app, since that's where they'll actually be seen on open (the profile
+  // switcher stays collapsed until tapped, so it's not a reliable first sight).
+  const pendingInvites = useMemo(() => pendingInvitesFor(members, userEmail), [members, userEmail]);
 
   return (
     <div className="mx-auto flex min-h-screen max-w-xl flex-col">
       <header className="safe-top flex items-center justify-between px-4 pb-1 pt-2">
         <ProfileSelector
           profiles={profiles}
+          members={members}
+          userId={userId}
           activeProfileId={activeProfileId}
           onSelect={setActiveProfile}
           onManage={() => setProfileManageOpen(true)}
@@ -365,6 +391,14 @@ export function Home() {
           </button>
         </div>
       </header>
+
+      {pendingInvites.length > 0 && (
+        <ul className="space-y-2 px-4 pt-2">
+          {pendingInvites.map((invite) => (
+            <PendingInviteCard key={invite.id} invite={invite} />
+          ))}
+        </ul>
+      )}
 
       <CaptureBar
         contexts={contexts}
@@ -460,7 +494,14 @@ export function Home() {
         <EditSheet task={tasks.find((t) => t.id === editing.id) ?? editing} contexts={contexts} profiles={profiles} onClose={() => setEditing(null)} />
       )}
       {manageOpen && <ContextManager contexts={contexts} tasks={tasks} onClose={() => setManageOpen(false)} />}
-      {profileManageOpen && <ProfileManager profiles={profiles} onClose={() => setProfileManageOpen(false)} />}
+      {profileManageOpen && (
+        <ProfileManager
+          profiles={profiles}
+          members={members}
+          userId={userId}
+          onClose={() => setProfileManageOpen(false)}
+        />
+      )}
       {exportOpen && (
         <ExportSheet
           profileName={profileName(profiles, activeProfileId)}
@@ -554,17 +595,23 @@ function SortControl({
 
 function ProfileSelector({
   profiles,
+  members,
+  userId,
   activeProfileId,
   onSelect,
   onManage,
 }: {
   profiles: Profile[];
+  members: ProfileMember[];
+  userId: string | null;
   activeProfileId: string | null;
   onSelect: (id: string | null) => void;
   onManage: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const current = profileName(profiles, activeProfileId);
+  const activeProfile = profiles.find((p) => p.id === activeProfileId);
+  const currentShared = activeProfile ? isProfileShared(activeProfile, members, userId) : false;
 
   function choose(id: string | null) {
     onSelect(id);
@@ -576,9 +623,10 @@ function ProfileSelector({
       <button
         onClick={() => setOpen((o) => !o)}
         aria-label="Switch profile"
-        className="flex items-center gap-1 text-lg font-bold tracking-tight"
+        className="flex items-center gap-1.5 text-lg font-bold tracking-tight"
       >
         <span>{current}</span>
+        {currentShared && <SharedBadge />}
         <svg viewBox="0 0 24 24" className={`h-4 w-4 text-muted transition ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -589,7 +637,13 @@ function ProfileSelector({
           <div className="absolute left-0 z-20 mt-1 w-48 overflow-hidden rounded-xl border border-line bg-elevated shadow-lg">
             <ProfileOption label={DEFAULT_PROFILE_NAME} active={activeProfileId === null} onClick={() => choose(null)} />
             {profiles.map((p) => (
-              <ProfileOption key={p.id} label={p.name} active={activeProfileId === p.id} onClick={() => choose(p.id)} />
+              <ProfileOption
+                key={p.id}
+                label={p.name}
+                shared={isProfileShared(p, members, userId)}
+                active={activeProfileId === p.id}
+                onClick={() => choose(p.id)}
+              />
             ))}
             <button
               onClick={() => {
@@ -607,12 +661,90 @@ function ProfileSelector({
   );
 }
 
-function ProfileOption({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function ProfileOption({
+  label,
+  shared,
+  active,
+  onClick,
+}: {
+  label: string;
+  shared?: boolean;
+  active: boolean;
+  onClick: () => void;
+}) {
   return (
-    <button onClick={onClick} className="flex w-full items-center justify-between px-3 py-2 text-sm text-muted">
-      <span className={active ? 'text-accent' : ''}>{label}</span>
-      {active && <span className="text-accent">✓</span>}
+    <button onClick={onClick} className="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm text-muted">
+      <span className={`flex min-w-0 items-center gap-1.5 truncate ${active ? 'text-accent' : ''}`}>
+        <span className="truncate">{label}</span>
+        {shared && <SharedBadge />}
+      </span>
+      {active && <span className="shrink-0 text-accent">✓</span>}
     </button>
+  );
+}
+
+// Quiet "two people" glyph marking a profile as shared — either one shared with
+// me, or one of mine that someone has accepted. Kept small and muted so it reads
+// as a detail, not a second headline.
+export function SharedBadge() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3 w-3 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="2">
+      <title>Shared</title>
+      <circle cx="8" cy="9" r="3" />
+      <path d="M2.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" strokeLinecap="round" />
+      <circle cx="16.5" cy="8" r="2.5" />
+      <path d="M14.8 11.2c2.6.3 4.7 2.2 4.7 4.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PendingInviteCard({ invite }: { invite: ProfileMember }) {
+  const [busy, setBusy] = useState<'accept' | 'reject' | null>(null);
+  // The invitee can't read the profiles row until they accept (RLS scopes `profiles`
+  // to owner + accepted members, so an unaccepted profile can never leak into the
+  // switcher). The name is denormalized onto the membership row for exactly this.
+  const name = invite.profile_name;
+
+  async function accept() {
+    setBusy('accept');
+    try {
+      await acceptInvite(invite.profile_id);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function reject() {
+    setBusy('reject');
+    try {
+      await rejectInvite(invite.id);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <li className="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+      <p className="min-w-0 flex-1 text-sm">
+        You've been invited to <span className="font-medium">{name}</span>
+      </p>
+      <button
+        onClick={reject}
+        disabled={busy !== null}
+        aria-label={`Reject invite to ${name}`}
+        className="shrink-0 rounded-xl border border-line px-3 py-1.5 text-xs text-muted disabled:opacity-40"
+      >
+        Reject
+      </button>
+      <button
+        onClick={accept}
+        disabled={busy !== null}
+        aria-label={`Accept invite to ${name}`}
+        className="shrink-0 rounded-xl bg-accent px-3 py-1.5 text-xs font-medium text-black disabled:opacity-40"
+      >
+        Accept
+      </button>
+    </li>
   );
 }
 

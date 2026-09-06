@@ -84,8 +84,12 @@ describe('contextsForProfile', () => {
   });
 });
 
+function profile(id: string, name: string, user_id: string): Profile {
+  return { id, name, created_at: '2026-01-01T00:00:00.000Z', user_id };
+}
+
 describe('profileName', () => {
-  const profiles: Profile[] = [{ id: 'work', name: 'Work', created_at: '2026-01-01T00:00:00.000Z' }];
+  const profiles: Profile[] = [profile('work', 'Work', 'me')];
 
   it('returns the Default name for the null bucket', () => {
     expect(profileName(profiles, null)).toBe(DEFAULT_PROFILE_NAME);
@@ -101,7 +105,7 @@ describe('profileName', () => {
 });
 
 describe('profileIdByName', () => {
-  const profiles: Profile[] = [{ id: 'work-id', name: 'Work', created_at: '2026-01-01T00:00:00.000Z' }];
+  const profiles: Profile[] = [profile('work-id', 'Work', 'me')];
 
   it('resolves a named profile case-insensitively', () => {
     expect(profileIdByName(profiles, 'work')).toBe('work-id');
@@ -119,6 +123,22 @@ describe('profileIdByName', () => {
 
   it('trims surrounding whitespace before matching', () => {
     expect(profileIdByName(profiles, '  Work  ')).toBe('work-id');
+  });
+
+  it('with no userId given, resolves to the first match (pre-sharing behaviour preserved)', () => {
+    expect(profileIdByName(profiles, 'work')).toBe('work-id');
+  });
+
+  describe('name collision between an owned profile and one shared with me', () => {
+    const collision: Profile[] = [profile('their-trip', 'Trip', 'them'), profile('my-trip', 'Trip', 'me')];
+
+    it('prefers the profile I own', () => {
+      expect(profileIdByName(collision, 'Trip', 'me')).toBe('my-trip');
+    });
+
+    it('falls back to the shared one when I own none by that name', () => {
+      expect(profileIdByName(collision, 'Trip', 'someone-else')).toBe('their-trip');
+    });
   });
 });
 

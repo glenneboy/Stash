@@ -1,4 +1,5 @@
-import type { Context, Profile, Task } from '../types';
+import type { Context, Profile, ProfileMember, Task } from '../types';
+import { isOwner, isShared } from './sharing';
 
 // ── Default ("Personal") profile ─────────────────────────────
 // The default profile is implicit: any task/context with a null (or absent)
@@ -32,10 +33,27 @@ export function profileName(profiles: Profile[], activeId: string | null): strin
 // Resolve a profile id from a display name, case-insensitively, for the
 // `?profile=<name>` deep link. Matches the Default profile's name too. Returns
 // undefined (distinct from the valid null id) when nothing matches.
-export function profileIdByName(profiles: Profile[], name: string): string | null | undefined {
+//
+// A name collision (my own "Trip" vs one shared with me) prefers the profile I
+// own — `userId` defaults to null so existing callers that don't pass it keep
+// resolving to the first match, same as before sharing existed.
+export function profileIdByName(
+  profiles: Profile[],
+  name: string,
+  userId: string | null = null,
+): string | null | undefined {
   const key = name.trim().toLowerCase();
   if (key === DEFAULT_PROFILE_NAME.toLowerCase()) return DEFAULT_PROFILE_ID;
-  return profiles.find((p) => p.name.toLowerCase() === key)?.id;
+  const matches = profiles.filter((p) => p.name.toLowerCase() === key);
+  if (matches.length === 0) return undefined;
+  return (matches.find((p) => isOwner(p, userId)) ?? matches[0]).id;
+}
+
+// A profile carries the shared badge either because I don't own it (someone
+// shared it with me) or because I own it and at least one invite has been
+// accepted — an owner sharing a profile sees it marked too.
+export function isProfileShared(profile: Profile, members: ProfileMember[], userId: string | null): boolean {
+  return !isOwner(profile, userId) || isShared(members, profile.id);
 }
 
 // ── Moving tasks between profiles ────────────────────────────

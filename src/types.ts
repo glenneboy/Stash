@@ -5,6 +5,31 @@ export interface Profile {
   id: string;
   name: string;
   created_at: string;
+  // The owner: the user who created the profile. Only the owner may share, rename
+  // or delete it, and every task/tag inside it is stored owned by them (a DB
+  // trigger stamps user_id on write), whoever actually typed it.
+  user_id: string;
+}
+
+export type MemberStatus = 'pending' | 'accepted';
+
+// One person's access to a shared profile. A row is created by the owner as an
+// invite (status 'pending', user_id null because the invitee may not have an
+// account yet) and is matched to them by email; accepting stamps user_id and
+// flips the status. Reject, revoke and leave all just delete the row.
+export interface ProfileMember {
+  id: string;
+  profile_id: string;
+  // Normalised (trimmed + lowercased) so Wife@Gmail.com and wife@gmail.com are one person.
+  email: string;
+  user_id: string | null;
+  status: MemberStatus;
+  created_at: string;
+  // The profile's name, copied onto the membership row by the database. A pending
+  // invitee deliberately can't read the profiles row until they accept, so this is
+  // the only way the invite card can name what they've been invited to. Kept in
+  // step by a trigger when the owner renames the profile.
+  profile_name: string;
 }
 
 export interface Context {

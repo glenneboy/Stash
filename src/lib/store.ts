@@ -1,7 +1,8 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
-import type { Context, Profile, Task } from '../types';
+import type { Context, Profile, ProfileMember, Task } from '../types';
 import { planContextMigration, profileName } from './profiles';
+import { isValidEmail, normalizeEmail } from './sharing';
 import { parseNaturalDate } from './dates';
 import { nextOccurrence } from './recur';
 
@@ -9,7 +10,8 @@ import { nextOccurrence } from './recur';
 interface Toast {
   id: string;
   message: string;
-  undo: () => void;
+  // Absent for plain messages (e.g. a failed share) that have nothing to undo.
+  undo?: () => void;
 }
 
 interface State {
@@ -24,6 +26,13 @@ interface State {
   syncing: boolean;
   pending: number;
   toast: Toast | null;
+  // My memberships of other people's profiles, plus the full member list of every
+  // profile I own. RLS decides which rows land here; this is never a security check.
+  members: ProfileMember[];
+  // The signed-in user. Cached locally so an offline launch still knows who owns
+  // what (and so a profile created offline can be stamped with its owner).
+  userId: string | null;
+  userEmail: string | null;
 }
 
 type Op =
@@ -41,8 +50,17 @@ const KEY = {
   tasks: 'stash.tasks',
   contexts: 'stash.contexts',
   profiles: 'stash.profiles',
+  members: 'stash.members',
   queue: 'stash.queue',
 };
+
+// Signed-in identity, cached so the app knows who it is before the session resolves.
+const IDENTITY_KEY = 'stash.identity';
+
+interface Identity {
+  userId: string | null;
+  userEmail: string | null;
+}
 
 // Per-device active-profile preference, kept separate from synced data.
 const ACTIVE_PROFILE_KEY = 'stash.activeProfile';
@@ -58,6 +76,9 @@ let state: State = {
   syncing: false,
   pending: load<Op[]>(KEY.queue, []).length,
   toast: null,
+  members: load<ProfileMember[]>(KEY.members, []),
+  userId: load<Identity>(IDENTITY_KEY, { userId: null, userEmail: null }).userId,
+  userEmail: load<Identity>(IDENTITY_KEY, { userId: null, userEmail: null }).userEmail,
 };
 
 const listeners = new Set<() => void>();
@@ -112,11 +133,18 @@ export function dismissToast(): void {
   set({ toast: null });
 }
 
+// A toast with nothing to undo — how the online-only sharing actions report failure.
+function showMessage(message: string): void {
+  if (toastTimer) clearTimeout(toastTimer);
+  set({ toast: { id: crypto.randomUUID(), message } });
+  toastTimer = setTimeout(() => set({ toast: null }), 5000);
+}
+
 export function runUndo(): void {
   const toast = state.toast;
   if (!toast) return;
   dismissToast();
-  toast.undo();
+  toast.undo?.();
 }
 
 function setContexts(contexts: Context[]): void {
@@ -127,6 +155,28 @@ function setContexts(contexts: Context[]): void {
 function setProfiles(profiles: Profile[]): void {
   save(KEY.profiles, profiles);
   set({ profiles });
+}
+
+function setMembers(members: ProfileMember[]): void {
+  save(KEY.members, members);
+  set({ members });
+}
+
+function setIdentity(userId: string | null, userEmail: string | null): void {
+  save(IDENTITY_KEY, { userId, userEmail } satisfies Identity);
+  set({ userId, userEmail });
+}
+
+// True for a membership row that is mine. Matched by user_id once accepted, and by
+// email while pending — an invite can predate the account it was addressed to.
+function isMyMembership(m: ProfileMember): boolean {
+  if (state.userId && m.user_id === state.userId) return true;
+  return state.userEmail !== null && normalizeEmail(m.email) === state.userEmail;
+}
+
+function ownsProfile(profileId: string): boolean {
+  const profile = state.profiles.find((p) => p.id === profileId);
+  return profile !== undefined && state.userId !== null && profile.user_id === state.userId;
 }
 
 // ── Write queue ──────────────────────────────────────────────
@@ -177,7 +227,11 @@ async function applyOp(op: Op): Promise<void> {
       break;
     }
     case 'profile.insert': {
-      const { error } = await supabase.from('profiles').insert(op.row);
+      // The owner is the database's business: profiles.user_id defaults to auth.uid()
+      // and RLS checks it. The local copy is optimistic only, and is blank when the
+      // profile was created before the session resolved.
+      const { user_id: _owner, ...row } = op.row;
+      const { error } = await supabase.from('profiles').insert(row);
       if (error) throw error;
       break;
     }
@@ -222,12 +276,24 @@ export async function flush(): Promise<void> {
 }
 
 // ── Server fetch + reconcile ─────────────────────────────────
+// Resolve who is signed in. A missing user (offline, or a session still refreshing)
+// leaves the cached identity alone rather than blanking it — losing it mid-session
+// would make every owned profile look like someone else's.
+async function loadIdentity(): Promise<void> {
+  const { data } = await supabase.auth.getUser();
+  const user = data.user;
+  if (!user) return;
+  setIdentity(user.id, user.email ? normalizeEmail(user.email) : null);
+}
+
 async function fetchAll(): Promise<void> {
   if (!navigator.onLine) return;
-  const [tasksRes, ctxRes, profRes] = await Promise.all([
+  await loadIdentity();
+  const [tasksRes, ctxRes, profRes, memberRes] = await Promise.all([
     supabase.from('tasks').select('*').order('created_at', { ascending: false }),
     supabase.from('contexts').select('*').order('created_at', { ascending: true }),
     supabase.from('profiles').select('*').order('created_at', { ascending: true }),
+    supabase.from('profile_members').select('*').order('created_at', { ascending: true }),
   ]);
   if (!tasksRes.error && tasksRes.data) {
     const incoming = tasksRes.data as Task[];
@@ -248,11 +314,55 @@ async function fetchAll(): Promise<void> {
     );
   }
   if (!ctxRes.error && ctxRes.data) setContexts(ctxRes.data as Context[]);
-  if (!profRes.error && profRes.data) setProfiles(profRes.data as Profile[]);
+  if (!memberRes.error && memberRes.data) setMembers(memberRes.data as ProfileMember[]);
+  if (!profRes.error && profRes.data) {
+    const incoming = profRes.data as Profile[];
+    const incomingIds = new Set(incoming.map((p) => p.id));
+    const pendingIds = new Set(readQueue().map((op) => ('row' in op ? op.row.id : op.id)));
+    // A profile that has dropped out of the snapshot is one I can no longer read:
+    // revoked, left on another device, or deleted by its owner. Purge its local copy
+    // silently, per the brief. A profile created locally whose insert hasn't flushed
+    // isn't in the snapshot either — those must survive.
+    const lost = state.profiles.filter((p) => !incomingIds.has(p.id) && !pendingIds.has(p.id));
+    setProfiles(incoming);
+    lost.forEach((p) => purgeProfile(p.id));
+  }
+  syncSharedChannels();
+}
+
+// ── Losing access to a shared profile ────────────────────────
+// Revoke, leave and owner-delete all end the same way: the profile and everything
+// in it must go, locally as well as on the server. Queued writes for those rows go
+// too — after revocation they fail RLS forever and would jam the queue behind them.
+function purgeProfile(id: string): void {
+  const doomed = new Set<string>([
+    id,
+    ...state.tasks.filter((t) => t.profile_id === id).map((t) => t.id),
+    ...state.contexts.filter((c) => c.profile_id === id).map((c) => c.id),
+  ]);
+  if (state.activeProfileId === id) setActiveProfile(null);
+  setTasks(state.tasks.filter((t) => t.profile_id !== id));
+  setContexts(state.contexts.filter((c) => c.profile_id !== id));
+  setProfiles(state.profiles.filter((p) => p.id !== id));
+  setMembers(state.members.filter((m) => m.profile_id !== id));
+  writeQueue(
+    readQueue().filter((op) => {
+      if (doomed.has('row' in op ? op.row.id : op.id)) return false;
+      // An unflushed insert names the profile even though the row is already gone
+      // from local state by now.
+      return !('row' in op && 'profile_id' in op.row && op.row.profile_id === id);
+    }),
+  );
 }
 
 // ── Realtime sync ────────────────────────────────────────────
+// Own rows: everything the DB says is mine (user_id = me), plus profile_members.
 let channel: RealtimeChannel | null = null;
+// Shared profiles: one channel per accepted membership, keyed by profile id, so a
+// membership change adds or drops a single channel instead of resubscribing the lot.
+// Under owner-owns-everything a member's rows carry the OWNER's user_id, so the
+// own-rows filter above would deliver them nothing at all.
+const sharedChannels = new Map<string, RealtimeChannel>();
 
 // A remote event for a row we still have unsynced locally must be ignored,
 // so an incoming change never clobbers a pending optimistic edit.
@@ -305,10 +415,104 @@ function onResume(): void {
   if (document.visibilityState === 'visible') void fetchAll();
 }
 
+// A membership row arriving, changing or vanishing. RLS already scopes this table
+// (owner sees their whole member list; everyone else sees only their own row), so
+// there is no filter on the subscription.
+function applyRemoteMember(
+  event: string,
+  next: ProfileMember | null,
+  prev: Partial<ProfileMember> | undefined,
+): void {
+  const id = next?.id ?? prev?.id;
+  if (!id) return;
+
+  if (event === 'DELETE') {
+    // Prefer the copy we already hold: a DELETE payload only carries the whole old
+    // row while replica identity is full, and we still want to know whose row it was.
+    const gone = state.members.find((m) => m.id === id) ?? (prev as ProfileMember | undefined);
+    setMembers(state.members.filter((m) => m.id !== id));
+    // My own membership disappearing means I was revoked (or left from another
+    // device). Drop the profile silently — the brief is explicit that revocation is
+    // not announced.
+    if (gone && isMyMembership(gone) && !ownsProfile(gone.profile_id)) purgeProfile(gone.profile_id);
+    syncSharedChannels();
+    return;
+  }
+
+  if (!next) return;
+  setMembers([...state.members.filter((m) => m.id !== id), next]);
+  syncSharedChannels();
+  // An invite of mine turning accepted (typically on another device) opens up rows
+  // this device has never been allowed to read; pull the snapshot in.
+  if (
+    isMyMembership(next) &&
+    next.status === 'accepted' &&
+    !state.profiles.some((p) => p.id === next.profile_id)
+  ) {
+    void fetchAll();
+  }
+}
+
+// Profiles I have accepted membership of and do not own. Owned profiles are
+// deliberately excluded: their rows already arrive on the own-rows channel, and a
+// second subscription would deliver every event twice.
+function sharedProfileIds(): string[] {
+  const me = state.userId;
+  if (!me) return [];
+  const owned = new Set(state.profiles.filter((p) => p.user_id === me).map((p) => p.id));
+  const ids = new Set<string>();
+  for (const m of state.members) {
+    if (m.status !== 'accepted' || m.user_id !== me) continue;
+    if (owned.has(m.profile_id)) continue;
+    ids.add(m.profile_id);
+  }
+  return [...ids];
+}
+
+// Reconcile the per-profile channels with the current membership set. Called after
+// every fetch and every membership change; removing the channels that are no longer
+// wanted is what stops them leaking as invites come and go.
+function syncSharedChannels(): void {
+  const wanted = new Set(sharedProfileIds());
+  for (const [id, ch] of sharedChannels) {
+    if (wanted.has(id)) continue;
+    void supabase.removeChannel(ch);
+    sharedChannels.delete(id);
+  }
+  for (const id of wanted) {
+    if (sharedChannels.has(id)) continue;
+    sharedChannels.set(id, subscribeToProfile(id));
+  }
+}
+
+function subscribeToProfile(profileId: string): RealtimeChannel {
+  const filter = `profile_id=eq.${profileId}`;
+  return supabase
+    .channel(`stash-profile-${profileId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'tasks', filter },
+      (payload) => applyRemoteTask(payload.eventType, payload.new as Task, (payload.old as { id?: string }).id),
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'contexts', filter },
+      (payload) => applyRemoteContext(payload.eventType, payload.new as Context, (payload.old as { id?: string }).id),
+    )
+    .on(
+      // The profile row belongs to its owner, so a rename or a delete would
+      // otherwise never reach a member.
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${profileId}` },
+      (payload) => applyRemoteProfile(payload.eventType, payload.new as Profile, (payload.old as { id?: string }).id),
+    )
+    .subscribe();
+}
+
 async function subscribeRealtime(): Promise<void> {
   teardownRealtime();
-  const { data } = await supabase.auth.getUser();
-  const userId = data.user?.id;
+  if (!state.userId) await loadIdentity();
+  const userId = state.userId;
   if (!userId) return;
   const filter = `user_id=eq.${userId}`;
 
@@ -329,7 +533,14 @@ async function subscribeRealtime(): Promise<void> {
       { event: '*', schema: 'public', table: 'profiles', filter },
       (payload) => applyRemoteProfile(payload.eventType, payload.new as Profile, (payload.old as { id?: string }).id),
     )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'profile_members' },
+      (payload) => applyRemoteMember(payload.eventType, payload.new as ProfileMember, payload.old as Partial<ProfileMember>),
+    )
     .subscribe();
+
+  syncSharedChannels();
 
   document.addEventListener('visibilitychange', onResume);
   window.addEventListener('focus', onResume);
@@ -342,6 +553,8 @@ function teardownRealtime(): void {
     void supabase.removeChannel(channel);
     channel = null;
   }
+  sharedChannels.forEach((ch) => void supabase.removeChannel(ch));
+  sharedChannels.clear();
 }
 
 export async function init(): Promise<void> {
@@ -368,8 +581,10 @@ export function reset(): void {
   localStorage.removeItem(KEY.tasks);
   localStorage.removeItem(KEY.contexts);
   localStorage.removeItem(KEY.profiles);
+  localStorage.removeItem(KEY.members);
   localStorage.removeItem(KEY.queue);
   localStorage.removeItem(ACTIVE_PROFILE_KEY);
+  localStorage.removeItem(IDENTITY_KEY);
   state = {
     tasks: [],
     contexts: [],
@@ -380,6 +595,9 @@ export function reset(): void {
     syncing: false,
     pending: 0,
     toast: null,
+    members: [],
+    userId: null,
+    userEmail: null,
   };
   listeners.forEach((fn) => fn());
 }
@@ -578,7 +796,14 @@ export function setActiveProfile(id: string | null): void {
 }
 
 export function createProfile(name: string): string {
-  const row: Profile = { id: crypto.randomUUID(), name: name.trim(), created_at: new Date().toISOString() };
+  const row: Profile = {
+    id: crypto.randomUUID(),
+    name: name.trim(),
+    created_at: new Date().toISOString(),
+    // Optimistic only — the server stamps the real owner (profiles.user_id defaults
+    // to auth.uid()) and the next fetch corrects this copy.
+    user_id: state.userId ?? '',
+  };
   setProfiles([...state.profiles, row]);
   enqueue({ kind: 'profile.insert', row });
   return row.id;
@@ -598,4 +823,95 @@ export function deleteProfile(id: string): void {
   setContexts(state.contexts.filter((c) => c.profile_id !== id));
   setProfiles(state.profiles.filter((p) => p.id !== id));
   enqueue({ kind: 'profile.delete', id });
+}
+
+// ── Sharing ──────────────────────────────────────────────────
+// These are deliberately NOT queued like everything else: sharing needs
+// connectivity, and replaying a queued membership write after the fact would let a
+// revoked member resurrect their own access. Each resolves either way and reports
+// failure with a toast, so the UI never has to catch.
+
+export async function inviteMember(profileId: string, email: string): Promise<void> {
+  const normalized = normalizeEmail(email);
+  if (!isValidEmail(normalized)) {
+    showMessage("That doesn't look like an email address");
+    return;
+  }
+  if (normalized === state.userEmail) {
+    showMessage("You can't invite yourself");
+    return;
+  }
+  // A repeat invite is a no-op that surfaces the existing one, never a second row.
+  const existing = state.members.find((m) => m.profile_id === profileId && m.email === normalized);
+  if (existing) {
+    showMessage(existing.status === 'accepted' ? 'Already a member' : 'Already invited');
+    return;
+  }
+  const { data, error } = await supabase
+    .from('profile_members')
+    .insert({ profile_id: profileId, email: normalized })
+    .select()
+    .single();
+  // The message never says whether that address has a Stash account.
+  if (error || !data) {
+    showMessage("Couldn't send that invite");
+    return;
+  }
+  setMembers([...state.members, data as ProfileMember]);
+}
+
+// Owner removing someone, or cancelling an invite they haven't accepted — the same
+// row deletion either way.
+export async function revokeMember(memberId: string): Promise<void> {
+  const member = state.members.find((m) => m.id === memberId);
+  const { error } = await supabase.from('profile_members').delete().eq('id', memberId);
+  if (error) {
+    showMessage("Couldn't remove them");
+    return;
+  }
+  setMembers(state.members.filter((m) => m.id !== memberId));
+  if (member && isMyMembership(member) && !ownsProfile(member.profile_id)) {
+    purgeProfile(member.profile_id);
+  }
+  syncSharedChannels();
+}
+
+export async function acceptInvite(profileId: string): Promise<void> {
+  const { error } = await supabase.rpc('accept_invite', { p_profile_id: profileId });
+  if (error) {
+    showMessage("Couldn't accept that invite");
+    return;
+  }
+  // The profile and its contents only become readable once the membership is
+  // accepted, so take the whole snapshot rather than patching state by hand.
+  // fetchAll also brings the per-profile realtime channel up.
+  await fetchAll();
+}
+
+export async function rejectInvite(memberId: string): Promise<void> {
+  const { error } = await supabase.from('profile_members').delete().eq('id', memberId);
+  if (error) {
+    showMessage("Couldn't reject that invite");
+    return;
+  }
+  // Nothing to purge: a pending invite never gave this device any data.
+  setMembers(state.members.filter((m) => m.id !== memberId));
+}
+
+// A member removing themselves. The owner can't leave their own profile — that is
+// a delete, and it is theirs alone to do.
+export async function leaveProfile(profileId: string): Promise<void> {
+  const userId = state.userId;
+  if (!userId || ownsProfile(profileId)) return;
+  const { error } = await supabase
+    .from('profile_members')
+    .delete()
+    .eq('profile_id', profileId)
+    .eq('user_id', userId);
+  if (error) {
+    showMessage("Couldn't leave that profile");
+    return;
+  }
+  purgeProfile(profileId);
+  syncSharedChannels();
 }

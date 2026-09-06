@@ -838,6 +838,22 @@ export function deleteProfile(id: string): void {
 // revoked member resurrect their own access. Each resolves either way and reports
 // failure with a toast, so the UI never has to catch.
 
+// PostgREST answers a request for a table or function it can't see in its schema
+// cache with a 404 and one of these codes. For sharing that means exactly one thing:
+// supabase/migrations/20260906_profile_sharing.sql has never been run against this
+// project. Say so, rather than blaming the invite — a generic "couldn't send that"
+// sends you hunting for a bug in code that is fine.
+function isSharingUnprovisioned(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return (
+    error.code === 'PGRST205' ||
+    error.code === 'PGRST202' ||
+    /schema cache/i.test(error.message ?? '')
+  );
+}
+
+const SHARING_UNPROVISIONED = 'Sharing isn\u2019t set up on the server yet';
+
 export async function inviteMember(profileId: string, email: string): Promise<void> {
   const normalized = normalizeEmail(email);
   if (!isValidEmail(normalized)) {
@@ -861,7 +877,7 @@ export async function inviteMember(profileId: string, email: string): Promise<vo
     .single();
   // The message never says whether that address has a Stash account.
   if (error || !data) {
-    showMessage("Couldn't send that invite");
+    showMessage(isSharingUnprovisioned(error) ? SHARING_UNPROVISIONED : "Couldn't send that invite");
     return;
   }
   setMembers([...state.members, data as ProfileMember]);
@@ -873,7 +889,7 @@ export async function revokeMember(memberId: string): Promise<void> {
   const member = state.members.find((m) => m.id === memberId);
   const { error } = await supabase.from('profile_members').delete().eq('id', memberId);
   if (error) {
-    showMessage("Couldn't remove them");
+    showMessage(isSharingUnprovisioned(error) ? SHARING_UNPROVISIONED : "Couldn't remove them");
     return;
   }
   setMembers(state.members.filter((m) => m.id !== memberId));
@@ -886,7 +902,7 @@ export async function revokeMember(memberId: string): Promise<void> {
 export async function acceptInvite(profileId: string): Promise<void> {
   const { error } = await supabase.rpc('accept_invite', { p_profile_id: profileId });
   if (error) {
-    showMessage("Couldn't accept that invite");
+    showMessage(isSharingUnprovisioned(error) ? SHARING_UNPROVISIONED : "Couldn't accept that invite");
     return;
   }
   // The profile and its contents only become readable once the membership is
@@ -898,7 +914,7 @@ export async function acceptInvite(profileId: string): Promise<void> {
 export async function rejectInvite(memberId: string): Promise<void> {
   const { error } = await supabase.from('profile_members').delete().eq('id', memberId);
   if (error) {
-    showMessage("Couldn't reject that invite");
+    showMessage(isSharingUnprovisioned(error) ? SHARING_UNPROVISIONED : "Couldn't reject that invite");
     return;
   }
   // Nothing to purge: a pending invite never gave this device any data.
@@ -916,7 +932,7 @@ export async function leaveProfile(profileId: string): Promise<void> {
     .eq('profile_id', profileId)
     .eq('user_id', userId);
   if (error) {
-    showMessage("Couldn't leave that profile");
+    showMessage(isSharingUnprovisioned(error) ? SHARING_UNPROVISIONED : "Couldn't leave that profile");
     return;
   }
   purgeProfile(profileId);

@@ -137,6 +137,8 @@ Create a new project at [supabase.com](https://supabase.com).
 
 In the SQL editor, run [`supabase/schema.sql`](supabase/schema.sql) to create the `tasks`, `contexts`, and `push_subscriptions` tables and their row-level-security policies.
 
+**On an existing project, `schema.sql` alone is not enough.** Every file in [`supabase/migrations/`](supabase/migrations) has to be run in the SQL editor too, oldest first — nothing applies them automatically, and the deploy workflow ships only the front end. A feature whose migration was skipped fails at runtime with a 404 from PostgREST (`Could not find the table … in the schema cache`); sharing, for instance, needs `20260906_profile_sharing.sql`. The migrations are idempotent, so re-running one is safe.
+
 Under **Authentication → Providers → Email**, ensure email is enabled (magic links work out of the box).
 
 ### 2. Configure environment
@@ -207,4 +209,5 @@ src/
 ├── main.tsx
 └── sw.ts                 # Workbox service worker (push, notification click)
 supabase/schema.sql       # tables + RLS — run this in Supabase SQL editor
+supabase/migrations/      # incremental SQL — run each in the SQL editor too
 ```

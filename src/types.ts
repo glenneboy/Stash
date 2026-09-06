@@ -25,6 +25,11 @@ export interface ProfileMember {
   user_id: string | null;
   status: MemberStatus;
   created_at: string;
+  // The profile's name, copied onto the membership row by the database. A pending
+  // invitee deliberately can't read the profiles row until they accept, so this is
+  // the only way the invite card can name what they've been invited to. Kept in
+  // step by a trigger when the owner renames the profile.
+  profile_name: string;
 }
 
 export interface Context {

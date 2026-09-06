@@ -395,7 +395,7 @@ export function Home() {
       {pendingInvites.length > 0 && (
         <ul className="space-y-2 px-4 pt-2">
           {pendingInvites.map((invite) => (
-            <PendingInviteCard key={invite.id} invite={invite} profiles={profiles} />
+            <PendingInviteCard key={invite.id} invite={invite} />
           ))}
         </ul>
       )}
@@ -698,13 +698,12 @@ export function SharedBadge() {
   );
 }
 
-function PendingInviteCard({ invite, profiles }: { invite: ProfileMember; profiles: Profile[] }) {
+function PendingInviteCard({ invite }: { invite: ProfileMember }) {
   const [busy, setBusy] = useState<'accept' | 'reject' | null>(null);
-  // The invitee can't see a profile's row until they've accepted membership in
-  // it (RLS scopes `profiles` to owner + accepted members), so the name is only
-  // available here if it happens to already be in local state for some other
-  // reason. Falling back to generic copy keeps the card honest either way.
-  const name = profiles.find((p) => p.id === invite.profile_id)?.name ?? 'a shared profile';
+  // The invitee can't read the profiles row until they accept (RLS scopes `profiles`
+  // to owner + accepted members, so an unaccepted profile can never leak into the
+  // switcher). The name is denormalized onto the membership row for exactly this.
+  const name = invite.profile_name;
 
   async function accept() {
     setBusy('accept');

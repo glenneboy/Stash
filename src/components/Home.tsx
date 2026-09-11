@@ -442,7 +442,7 @@ export function Home() {
           <>
             {active.length > 0 && (
               <div className="flex items-center justify-start px-4 pt-2">
-                <SortControl sort={activeSort} onChange={handleActiveSortChange} hasCustom={hasCustomOrder} />
+                <SortControl sort={activeSort} onChange={handleActiveSortChange} hasCustom={hasCustomOrder} align="left" />
               </div>
             )}
             <ul ref={listRef} className="divide-y divide-line/60">
@@ -525,10 +525,12 @@ function SortControl({
   sort,
   onChange,
   hasCustom,
+  align = 'right',
 }: {
   sort: Sort;
   onChange: (s: Sort) => void;
   hasCustom?: boolean;
+  align?: 'left' | 'right';
 }) {
   const [open, setOpen] = useState(false);
 
@@ -566,7 +568,11 @@ function SortControl({
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-32 overflow-hidden rounded-xl border border-line bg-elevated shadow-lg">
+          <div
+            className={`absolute z-20 mt-1 w-32 overflow-hidden rounded-xl border border-line bg-elevated shadow-lg ${
+              align === 'left' ? 'left-0' : 'right-0'
+            }`}
+          >
             {hasCustom && (
               <button
                 onClick={() => pick('custom')}

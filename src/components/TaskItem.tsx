@@ -3,6 +3,7 @@ import type { Context, Task } from '../types';
 import { toggleComplete, deleteTask } from '../lib/store';
 import { hasReminder, isOverdue } from '../lib/reminders';
 import { dueInfo } from '../lib/due';
+import { ageInfo, isWithinLiveTickWindow, type DateDisplay } from '../lib/age';
 
 interface DragGrip {
   onPointerDown: (e: React.PointerEvent) => void;
@@ -17,16 +18,37 @@ interface Props {
   dragGrip?: DragGrip;
   isDragging?: boolean;
   dragOver?: 'above' | 'below';
+  dateDisplay?: DateDisplay;
 }
 
 const SWIPE_THRESHOLD = 80;
 
-export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOver }: Props) {
+export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOver, dateDisplay = 'due' }: Props) {
   const tags = task.contexts
     .map((id) => contexts.find((c) => c.id === id)?.name)
     .filter((n): n is string => Boolean(n));
 
   const due = dueInfo(task);
+
+  // While in "age" mode, tick once per second for the first 60 seconds of a
+  // task's life so the seconds counter updates live; the timer self-clears
+  // once the task ages past 60s and never starts in "due" mode or for tasks
+  // already past that window, so each row only pays for the timer it needs.
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (dateDisplay !== 'age' || !isWithinLiveTickWindow(task)) return;
+    const createdAt = new Date(task.created_at).getTime();
+    const id = setInterval(() => {
+      if (Date.now() - createdAt >= 60_000) {
+        clearInterval(id);
+        return;
+      }
+      forceTick((n) => n + 1);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [dateDisplay, task.created_at]);
+
+  const badge = dateDisplay === 'age' ? { label: ageInfo(task).label, className: 'text-muted', alert: false } : due;
 
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number } | null>(null);
@@ -190,11 +212,11 @@ export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOve
             )}
           </p>
           {task.note && <p className="mt-0.5 break-words text-sm text-muted">{task.note}</p>}
-          {(due || tags.length > 0) && (
+          {(badge || tags.length > 0) && (
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-              {due && (
-                <span className={`inline-flex items-center gap-1 text-xs font-medium ${due.className}`}>
-                  {due.alert ? (
+              {badge && (
+                <span className={`inline-flex items-center gap-1 text-xs font-medium ${badge.className}`}>
+                  {badge.alert ? (
                     <svg viewBox="0 0 24 24" aria-hidden="true" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M10.3 3.9 1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" strokeLinecap="round" strokeLinejoin="round" />
                       <path d="M12 9v4" strokeLinecap="round" />
@@ -203,7 +225,7 @@ export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOve
                   ) : (
                     <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
                   )}
-                  <span>{due.label}</span>
+                  <span>{badge.label}</span>
                 </span>
               )}
               {tags.map((name) => (

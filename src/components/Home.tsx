@@ -13,6 +13,7 @@ import {
   DEFAULT_PROFILE_NAME,
 } from '../lib/profiles';
 import { supabase } from '../lib/supabase';
+import type { DateDisplay } from '../lib/age';
 import { CaptureBar } from './CaptureBar';
 import { FilterBar } from './FilterBar';
 import { TaskItem } from './TaskItem';
@@ -70,6 +71,21 @@ function loadCustomOrders(): Record<string, string[]> {
 
 function saveCustomOrders(orders: Record<string, string[]>) {
   localStorage.setItem(CUSTOM_ORDER_KEY, JSON.stringify(orders));
+}
+
+// Per-device preference for what each active task's date badge shows.
+const DATE_DISPLAY_KEY = 'stash.dateDisplay';
+
+function loadDateDisplay(): DateDisplay {
+  try {
+    return localStorage.getItem(DATE_DISPLAY_KEY) === 'age' ? 'age' : 'due';
+  } catch {
+    return 'due';
+  }
+}
+
+function saveDateDisplay(v: DateDisplay) {
+  localStorage.setItem(DATE_DISPLAY_KEY, v);
 }
 
 // Custom sort orders are stored per (profile, context-selection). Including the
@@ -135,6 +151,7 @@ export function Home() {
   const [activeSort, setActiveSort] = useState<Sort>({ field: 'due', dir: 'asc' });
   const [completedSort, setCompletedSort] = useState<Sort>({ field: 'date', dir: 'desc' });
   const [customOrders, setCustomOrders] = useState<Record<string, string[]>>(loadCustomOrders);
+  const [dateDisplay, setDateDisplay] = useState<DateDisplay>(loadDateDisplay);
   const shared = useMemo(readShared, []);
 
   // Drag state: ref for fresh reads in handlers, state for rendering.
@@ -231,6 +248,11 @@ export function Home() {
       saveCustomOrders(updated);
     }
     setActiveSort(sort);
+  }
+
+  function handleDateDisplayChange(v: DateDisplay) {
+    setDateDisplay(v);
+    saveDateDisplay(v);
   }
 
   // --- Drag-to-reorder ---
@@ -441,8 +463,9 @@ export function Home() {
         ) : (
           <>
             {active.length > 0 && (
-              <div className="flex items-center justify-start px-4 pt-2">
+              <div className="flex items-center justify-between px-4 pt-2">
                 <SortControl sort={activeSort} onChange={handleActiveSortChange} hasCustom={hasCustomOrder} />
+                <DateDisplayControl value={dateDisplay} onChange={handleDateDisplayChange} />
               </div>
             )}
             <ul ref={listRef} className="divide-y divide-line/60">
@@ -459,6 +482,7 @@ export function Home() {
                     onPointerMove: moveDrag,
                     onPointerUp: endDrag,
                   } : undefined}
+                  dateDisplay={dateDisplay}
                 />
               ))}
             </ul>
@@ -584,6 +608,61 @@ function SortControl({
               >
                 <span className={field === sort.field ? 'text-accent' : ''}>{fieldLabel}</span>
                 {field === sort.field && <span className="text-accent">{sort.dir === 'asc' ? '↑' : '↓'}</span>}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+const DATE_DISPLAY_OPTIONS: { value: DateDisplay; label: string }[] = [
+  { value: 'due', label: 'Due date' },
+  { value: 'age', label: 'Age' },
+];
+
+function DateDisplayControl({
+  value,
+  onChange,
+}: {
+  value: DateDisplay;
+  onChange: (v: DateDisplay) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  function pick(v: DateDisplay) {
+    onChange(v);
+    setOpen(false);
+  }
+
+  const label = value === 'age' ? 'Age' : 'Due date';
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Date display"
+        className={`flex items-center gap-1 text-xs ${open ? 'text-accent' : 'text-muted'}`}
+      >
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="9" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M12 7v5l3 3" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span>{label}</span>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-20 mt-1 w-32 overflow-hidden rounded-xl border border-line bg-elevated shadow-lg">
+            {DATE_DISPLAY_OPTIONS.map(({ value: v, label: optLabel }) => (
+              <button
+                key={v}
+                onClick={() => pick(v)}
+                className="flex w-full items-center justify-between px-3 py-2 text-sm text-muted"
+              >
+                <span className={v === value ? 'text-accent' : ''}>{optLabel}</span>
+                {v === value && <span className="text-accent">✓</span>}
               </button>
             ))}
           </div>

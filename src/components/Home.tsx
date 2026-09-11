@@ -441,7 +441,7 @@ export function Home() {
         ) : (
           <>
             {active.length > 0 && (
-              <div className="flex items-center justify-end px-4 pt-2">
+              <div className="flex items-center justify-start px-4 pt-2">
                 <SortControl sort={activeSort} onChange={handleActiveSortChange} hasCustom={hasCustomOrder} />
               </div>
             )}

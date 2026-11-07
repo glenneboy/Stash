@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Profile, ProfileMember, Task } from '../types';
 import { useStore } from '../lib/useStore';
-import { quickAddTask, clearCompleted, setActiveProfile, acceptInvite, rejectInvite } from '../lib/store';
+import { quickAddTask, clearCompleted, setActiveProfile, installTemplate, acceptInvite, rejectInvite } from '../lib/store';
 import { parseTags } from '../lib/tags';
 import { pendingInvitesFor } from '../lib/sharing';
 import {
@@ -323,6 +323,18 @@ export function Home() {
     const { title, tagIds } = parseTags(text, contexts);
     if (title) quickAddTask(title, tagIds);
   }, [loaded, contexts]);
+
+  // Template deep-link: `?template=<key>` installs a starter checklist as its own profile
+  // (or opens it if already installed). Fires once per load.
+  const templateHandled = useRef(false);
+  useEffect(() => {
+    if (templateHandled.current || !loaded) return;
+    const key = new URLSearchParams(window.location.search).get('template');
+    templateHandled.current = true;
+    if (!key) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    installTemplate(key);
+  }, [loaded]);
 
   // Notification deep-link: `?task=<id>` opens that task's edit sheet once loaded.
   const taskLinkHandled = useRef(false);

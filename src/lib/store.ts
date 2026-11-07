@@ -5,6 +5,7 @@ import { planContextMigration, profileName } from './profiles';
 import { isValidEmail, normalizeEmail } from './sharing';
 import { parseNaturalDate } from './dates';
 import { nextOccurrence } from './recur';
+import { TEMPLATES, buildTemplate } from './templates';
 
 // ── Persisted state shape ────────────────────────────────────
 interface Toast {
@@ -814,6 +815,30 @@ export function createProfile(name: string): string {
   setProfiles([...state.profiles, row]);
   enqueue({ kind: 'profile.insert', row });
   return row.id;
+}
+
+// Install a starter checklist (see templates.ts) as a new profile and switch to it.
+// If a profile with that name already exists it is just opened, so reopening the
+// link never duplicates the list.
+export function installTemplate(key: string): void {
+  const template = TEMPLATES[key.toLowerCase()];
+  if (!template) return;
+  const existing = state.profiles.find(
+    (p) => p.name.toLowerCase() === template.profileName.toLowerCase() && p.user_id === state.userId,
+  );
+  if (existing) {
+    setActiveProfile(existing.id);
+    return;
+  }
+  const { profile, contexts, tasks } = buildTemplate(template, state.userId ?? '');
+  setProfiles([...state.profiles, profile]);
+  enqueue({ kind: 'profile.insert', row: profile });
+  setContexts([...state.contexts, ...contexts]);
+  contexts.forEach((row) => enqueue({ kind: 'context.insert', row }));
+  setTasks([...tasks, ...state.tasks].sort((a, b) => b.created_at.localeCompare(a.created_at)));
+  tasks.forEach((row) => enqueue({ kind: 'task.insert', row }));
+  setActiveProfile(profile.id);
+  showMessage(`Added ${template.profileName} checklist`);
 }
 
 export function renameProfile(id: string, name: string): void {

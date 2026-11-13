@@ -3,6 +3,7 @@ import type { Context } from '../types';
 import { createTask } from '../lib/store';
 import { parseTags } from '../lib/tags';
 import { parseNaturalDate } from '../lib/dates';
+import { NoteEditor } from './NoteEditor';
 
 interface Props {
   contexts: Context[];
@@ -76,12 +77,12 @@ export function CaptureBar({ contexts, activeContextIds, initialTitle = '', init
       </div>
 
       {note && (
-        <textarea
+        <NoteEditor
           value={note}
-          onChange={(e) => setNote(e.target.value)}
+          onChange={setNote}
           placeholder="Note"
-          rows={4}
-          className="mt-2 w-full resize-none rounded-xl border border-line bg-surface px-4 py-3 text-sm outline-none placeholder:text-muted focus:border-accent"
+          minRows={4}
+          className="mt-2 rounded-xl border border-line bg-surface px-4 pb-1 pt-3 focus-within:border-accent"
         />
       )}
 

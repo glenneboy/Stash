@@ -3,6 +3,7 @@ import type { Context, Profile, Recurrence, Task } from '../types';
 import { updateTask, deleteTask, setReminder, clearReminder, toggleComplete, moveTaskToProfile, createContext } from '../lib/store';
 import { ensurePushSubscription } from '../lib/push';
 import { toLocalInput, fromLocalInput } from '../lib/reminders';
+import { NoteEditor } from './NoteEditor';
 import { DEFAULT_PROFILE_ID, DEFAULT_PROFILE_NAME, profileOf } from '../lib/profiles';
 
 interface Props {
@@ -218,12 +219,11 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
               className="min-w-0 flex-1 bg-transparent text-lg font-semibold leading-tight outline-none placeholder:text-muted sm:text-xl"
             />
           </div>
-          <textarea
+          <NoteEditor
             value={note}
-            onChange={(e) => setNote(e.target.value)}
+            onChange={setNote}
             placeholder="Add a note…"
-            rows={2}
-            className="ml-9 mt-2 block w-[calc(100%-2.25rem)] resize-none bg-transparent text-sm leading-relaxed text-[#9a948e] outline-none placeholder:text-muted"
+            className="ml-9 mt-2 w-[calc(100%-2.25rem)]"
           />
         </div>
 

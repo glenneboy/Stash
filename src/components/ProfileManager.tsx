@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Profile, ProfileMember } from '../types';
 import { createProfile, renameProfile, deleteProfile, inviteMember, revokeMember, leaveProfile } from '../lib/store';
 import { isOwner, isValidEmail, membersOf, acceptedMembersOf } from '../lib/sharing';
 import { DEFAULT_PROFILE_NAME, isProfileShared } from '../lib/profiles';
 import { SharedBadge } from './Home';
+import { DiscardPrompt } from './DiscardPrompt';
+import { useDirtyGuard } from '../hooks/useDirtyGuard';
+import { useSwipeDown } from '../hooks/useSwipeDown';
 
 interface Props {
   profiles: Profile[];
@@ -22,10 +25,16 @@ export function ProfileManager({ profiles, members, userId, onClose }: Props) {
     setAdding('');
   }
 
+  // A half-typed new profile counts as unsaved; renames already commit on blur.
+  const guard = useDirtyGuard(adding.trim() !== '', onClose);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useSwipeDown(sheetRef, guard.requestClose);
+
   return (
-    <div className="fixed inset-0 z-20 flex flex-col justify-end bg-black/60" onClick={onClose}>
+    <div className="fixed inset-0 z-20 flex flex-col justify-end overscroll-contain bg-black/60" onClick={guard.requestClose}>
       <div
-        className="safe-bottom max-h-[80vh] overflow-y-auto rounded-t-3xl border-t border-line bg-surface p-5"
+        ref={sheetRef}
+        className="safe-bottom max-h-[80vh] overflow-y-auto overscroll-contain rounded-t-3xl border-t border-line bg-surface p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-line" />
@@ -68,10 +77,22 @@ export function ProfileManager({ profiles, members, userId, onClose }: Props) {
           </button>
         </form>
 
-        <button onClick={onClose} className="mt-5 w-full rounded-xl border border-line px-4 py-3 text-sm text-muted">
+        <button onClick={guard.requestClose} className="mt-5 w-full rounded-xl border border-line px-4 py-3 text-sm text-muted">
           Done
         </button>
       </div>
+
+      {guard.confirming && (
+        <DiscardPrompt
+          saveLabel="Add profile"
+          onSave={() => {
+            createProfile(adding);
+            onClose();
+          }}
+          onDiscard={onClose}
+          onKeepEditing={guard.cancel}
+        />
+      )}
     </div>
   );
 }

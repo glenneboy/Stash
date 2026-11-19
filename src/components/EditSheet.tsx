@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Context, Profile, Recurrence, Task } from '../types';
 import { updateTask, deleteTask, setReminder, clearReminder, toggleComplete, moveTaskToProfile, createContext } from '../lib/store';
 import { ensurePushSubscription } from '../lib/push';
 import { toLocalInput, fromLocalInput } from '../lib/reminders';
 import { NoteEditor } from './NoteEditor';
+import { DiscardPrompt } from './DiscardPrompt';
+import { useDirtyGuard } from '../hooks/useDirtyGuard';
+import { useSwipeDown } from '../hooks/useSwipeDown';
 import { DEFAULT_PROFILE_ID, DEFAULT_PROFILE_NAME, profileOf } from '../lib/profiles';
 
 interface Props {
@@ -28,23 +31,97 @@ function remindLabel(value: string): string {
   return `${d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}, ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}`;
 }
 
+type RepeatChoice = 'none' | 'day' | 'week' | 'month' | 'custom';
+
+// Everything the form edits. Snapshotted on open to detect unsaved changes, and
+// mirrored to localStorage while dirty so a reload or killed app doesn't lose it.
+interface FormState {
+  title: string;
+  note: string;
+  tags: string[];
+  due: string;
+  reminder: string;
+  repeat: RepeatChoice;
+  customN: number;
+  customUnit: Recurrence['unit'];
+}
+
+function formFromTask(task: Task): FormState {
+  return {
+    title: task.title,
+    note: task.note ?? '',
+    tags: task.contexts,
+    due: task.due_on ?? '',
+    reminder: toLocalInput(task.reminder_at),
+    repeat: !task.recur ? 'none' : task.recur.interval === 1 ? task.recur.unit : 'custom',
+    customN: task.recur?.interval ?? 2,
+    customUnit: task.recur?.unit ?? 'week',
+  };
+}
+
+function ruleOf(f: Pick<FormState, 'repeat' | 'customN' | 'customUnit'>): Recurrence | null {
+  if (f.repeat === 'none') return null;
+  if (f.repeat === 'custom') return { unit: f.customUnit, interval: Math.max(1, Math.floor(f.customN) || 1) };
+  return { unit: f.repeat, interval: 1 };
+}
+
+// Compares what would actually be saved, so whitespace-only or no-op edits don't nag.
+function sameForm(a: FormState, b: FormState): boolean {
+  const ra = ruleOf(a);
+  const rb = ruleOf(b);
+  return (
+    a.title.trim() === b.title.trim() &&
+    a.note.trim() === b.note.trim() &&
+    a.due === b.due &&
+    a.reminder === b.reminder &&
+    a.tags.length === b.tags.length &&
+    a.tags.every((t) => b.tags.includes(t)) &&
+    (ra === null || rb === null ? ra === rb : ra.unit === rb.unit && ra.interval === rb.interval)
+  );
+}
+
+const draftKey = (id: string) => `stash:draft:${id}`;
+
+function readDraft(id: string): FormState | null {
+  try {
+    const raw = localStorage.getItem(draftKey(id));
+    return raw ? (JSON.parse(raw) as FormState) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeDraft(id: string, form: FormState | null) {
+  try {
+    if (form) localStorage.setItem(draftKey(id), JSON.stringify(form));
+    else localStorage.removeItem(draftKey(id));
+  } catch {
+    /* storage unavailable — the in-app prompt still guards */
+  }
+}
+
 const SECTION_LABEL = 'mb-2.5 ml-1 mt-5 block text-xs font-semibold uppercase tracking-[0.08em] text-muted';
 const CARD = 'rounded-2xl border border-white/5 bg-elevated/60';
 
 export function EditSheet({ task, contexts, profiles, onClose }: Props) {
-  const [title, setTitle] = useState(task.title);
-  const [note, setNote] = useState(task.note ?? '');
-  const [tags, setTags] = useState<string[]>(task.contexts);
-  const [due, setDue] = useState(task.due_on ?? '');
-  const [reminder, setReminderInput] = useState(toLocalInput(task.reminder_at));
+  // What the task looked like when the sheet opened; edits are measured against it.
+  const [initial] = useState(() => formFromTask(task));
+  // A draft left by a reload / killed app is restored so long notes aren't lost.
+  const [restored] = useState(() => {
+    const d = readDraft(task.id);
+    return d && !sameForm(d, initial) ? d : null;
+  });
+  const start = restored ?? initial;
+  const [title, setTitle] = useState(start.title);
+  const [note, setNote] = useState(start.note);
+  const [tags, setTags] = useState<string[]>(start.tags);
+  const [due, setDue] = useState(start.due);
+  const [reminder, setReminderInput] = useState(start.reminder);
   const [notifyWarn, setNotifyWarn] = useState(false);
   // 'custom' shows the every-N picker; presets map straight to a rule.
-  const [repeat, setRepeat] = useState<'none' | 'day' | 'week' | 'month' | 'custom'>(() => {
-    if (!task.recur) return 'none';
-    return task.recur.interval === 1 ? task.recur.unit : 'custom';
-  });
-  const [customN, setCustomN] = useState(task.recur?.interval ?? 2);
-  const [customUnit, setCustomUnit] = useState<Recurrence['unit']>(task.recur?.unit ?? 'week');
+  const [repeat, setRepeat] = useState<RepeatChoice>(start.repeat);
+  const [customN, setCustomN] = useState(start.customN);
+  const [customUnit, setCustomUnit] = useState<Recurrence['unit']>(start.customUnit);
   const [repeatOpen, setRepeatOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [addingContext, setAddingContext] = useState(false);
@@ -103,19 +180,28 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
     ...profiles.map((p) => ({ id: p.id, name: p.name })),
   ].filter((p) => p.id !== currentProfileId);
 
+  const form = useMemo<FormState>(
+    () => ({ title, note, tags, due, reminder, repeat, customN, customUnit }),
+    [title, note, tags, due, reminder, repeat, customN, customUnit],
+  );
+  const dirty = !sameForm(form, initial);
+
   useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+    writeDraft(task.id, dirty ? form : null);
+  }, [task.id, dirty, form]);
+
+  // Every way out of the sheet (backdrop, Escape, Cancel, pull-down) goes through here.
+  const close = useCallback(() => {
+    writeDraft(task.id, null);
+    onClose();
+  }, [task.id, onClose]);
+  const guard = useDirtyGuard(dirty, close);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useSwipeDown(sheetRef, guard.requestClose);
 
   // The rule the current picker state represents (null = doesn't repeat).
   function recurRule(): Recurrence | null {
-    if (repeat === 'none') return null;
-    if (repeat === 'custom') return { unit: customUnit, interval: Math.max(1, Math.floor(customN) || 1) };
-    return { unit: repeat, interval: 1 };
+    return ruleOf({ repeat, customN, customUnit });
   }
 
   function toggleTag(id: string) {
@@ -158,12 +244,12 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
         clearReminder(task.id);
       }
     }
-    onClose();
+    close();
   }
 
   function remove() {
     deleteTask(task.id);
-    onClose();
+    close();
   }
 
   // Save any in-progress edits first so they travel with the task, then move it.
@@ -173,7 +259,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
       updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags, due_on: due || null, recur: recurRule() });
     }
     moveTaskToProfile(task.id, targetId);
-    onClose();
+    close();
   }
 
   // Completing from the sheet keeps any unsaved edits, then closes.
@@ -182,19 +268,29 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
       updateTask(task.id, { title: title.trim(), note: note.trim() || null, contexts: tags, due_on: due || null, recur: recurRule() });
     }
     toggleComplete(task.id);
-    onClose();
+    close();
   }
 
   return (
     <div
-      className="fixed inset-0 z-20 flex flex-col justify-end bg-black/60 sm:items-center sm:justify-center"
-      onClick={onClose}
+      className="fixed inset-0 z-20 flex flex-col justify-end overscroll-contain bg-black/60 sm:items-center sm:justify-center"
+      onClick={guard.requestClose}
     >
       <div
-        className="safe-bottom max-h-full w-full overflow-y-auto rounded-t-3xl border-t border-line bg-surface p-4 pt-[18px] sm:max-w-[640px] sm:rounded-2xl sm:border sm:p-6"
+        ref={sheetRef}
+        className="safe-bottom max-h-full w-full overflow-y-auto overscroll-contain rounded-t-3xl border-t border-line bg-surface p-4 pt-[18px] sm:max-w-[640px] sm:rounded-2xl sm:border sm:p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mb-[18px] h-1 w-9 rounded-full bg-line sm:hidden" />
+
+        {restored && (
+          <p className="-mt-1.5 mb-3 text-center text-xs text-muted">
+            Restored your unsaved changes ·{' '}
+            <button onClick={close} className="font-medium text-accent">
+              Discard
+            </button>
+          </p>
+        )}
 
         {/* Content */}
         <div className={`${CARD} p-4`}>
@@ -505,7 +601,7 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
           </button>
           <span className="hidden flex-1 sm:block" />
           <button
-            onClick={onClose}
+            onClick={guard.requestClose}
             className="hidden rounded-[11px] border border-white/[0.14] px-[22px] py-[11px] text-sm font-semibold text-[#b3ada7] sm:block"
           >
             Cancel
@@ -519,6 +615,21 @@ export function EditSheet({ task, contexts, profiles, onClose }: Props) {
           </button>
         </div>
       </div>
+
+      {guard.confirming && (
+        <DiscardPrompt
+          onSave={
+            title.trim()
+              ? () => {
+                  guard.cancel();
+                  void save();
+                }
+              : undefined
+          }
+          onDiscard={close}
+          onKeepEditing={guard.cancel}
+        />
+      )}
     </div>
   );
 }

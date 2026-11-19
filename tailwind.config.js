@@ -21,9 +21,19 @@ export default {
           '40%': { transform: 'scale(1.3)' },
           '100%': { transform: 'scale(1)' },
         },
+        fade: {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
+        rise: {
+          '0%': { transform: 'translateY(16px)', opacity: '0' },
+          '100%': { transform: 'translateY(0)', opacity: '1' },
+        },
       },
       animation: {
         pop: 'pop 250ms ease-out',
+        fade: 'fade 160ms ease-out',
+        rise: 'rise 200ms cubic-bezier(.2,.8,.2,1)',
       },
     },
   },

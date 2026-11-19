@@ -12,6 +12,11 @@ body,
   height: 100%;
 }
 
+/* No pull-to-refresh: a stray pull-down would reload the page and lose unsaved edits. */
+html {
+  overscroll-behavior-y: none;
+}
+
 body {
   background: #0f0f0f;
   color: #f5f5f5;

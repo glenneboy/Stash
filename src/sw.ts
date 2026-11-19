@@ -12,7 +12,11 @@ precacheAndRoute(self.__WB_MANIFEST);
 // SPA navigation fallback (parity with the previous generateSW navigateFallback).
 registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html')));
 
-self.addEventListener('install', (event) => event.waitUntil(self.skipWaiting()));
+// A new version waits instead of taking over straight away; the page shows a
+// "New version available · Refresh" banner and sends SKIP_WAITING when tapped.
+self.addEventListener('message', (event) => {
+  if ((event.data as { type?: string } | null)?.type === 'SKIP_WAITING') void self.skipWaiting();
+});
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 
 interface PushPayload {

@@ -16,7 +16,7 @@ Mobile-first PWA task manager. React + TypeScript + Vite, Supabase (email OTP / 
 
 ## Facts — don't re-derive these
 - Quick-capture deeplink: `https://glenneboy.github.io/Stash/?add=<text> #Tag` — text becomes the task, trailing `#tag` sets the context. Used by jeebs/Raycast/Shortcuts.
-- Installed PWAs (iOS/Android/Mac) pick up a Pages deploy on next launch once the service worker refreshes — no reinstall needed.
+- Installed PWAs (iOS/Android/Mac) never reload on their own, so a new deploy downloads in the background and the app shows a "New version available · Refresh" banner (`UpdateBanner.tsx`). It checks on launch, on return to foreground, and hourly. Without tapping Refresh, the new version loads only once the app is fully closed. No reinstall needed.
 - iOS has no Web Share Target; that's why the `?add=` deeplink exists.
 - The backlog lives in GitHub issues, not a backlog.md.
 

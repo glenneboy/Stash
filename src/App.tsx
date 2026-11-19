@@ -4,6 +4,7 @@ import { init, reset } from './lib/store';
 import { Auth } from './components/Auth';
 import { Home } from './components/Home';
 import { OpenInApp } from './components/OpenInApp';
+import { UpdateBanner } from './components/UpdateBanner';
 
 // Captured at module load time, before Supabase clears the URL
 const isMagicLinkCallback =
@@ -17,6 +18,15 @@ const isIOSBrowser =
   !window.matchMedia('(display-mode: standalone)').matches;
 
 export default function App() {
+  return (
+    <>
+      <Screen />
+      <UpdateBanner />
+    </>
+  );
+}
+
+function Screen() {
   const { session, ready } = useSession();
 
   useEffect(() => {

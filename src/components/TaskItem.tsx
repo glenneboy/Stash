@@ -4,7 +4,7 @@ import { toggleComplete, deleteTask } from '../lib/store';
 import { hasReminder, isOverdue } from '../lib/reminders';
 import { dueInfo } from '../lib/due';
 import { ageInfo, isWithinLiveTickWindow, type DateDisplay } from '../lib/age';
-import { NoteText } from './NoteText';
+import { TaskNote } from './TaskNote';
 
 interface DragGrip {
   onPointerDown: (e: React.PointerEvent) => void;
@@ -212,7 +212,7 @@ export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOve
               </svg>
             )}
           </p>
-          {task.note && <NoteText text={task.note} className="mt-0.5 text-sm text-muted" />}
+          {task.note && <TaskNote text={task.note} completed={task.completed} />}
           {(badge || tags.length > 0) && (
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               {badge && (

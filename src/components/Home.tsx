@@ -19,6 +19,7 @@ import type { DateDisplay } from '../lib/age';
 import { CaptureBar } from './CaptureBar';
 import { FilterBar } from './FilterBar';
 import { TaskItem } from './TaskItem';
+import { useFlip } from '../hooks/useFlip';
 import { EditSheet } from './EditSheet';
 import { ContextManager } from './ContextManager';
 import { ProfileManager } from './ProfileManager';
@@ -249,6 +250,11 @@ export function Home() {
   }, [visible, activeSort, customOrders, contextKey]);
 
   const completed = useMemo(() => sortTasks(visible.filter((t) => t.completed), completedSort), [visible, completedSort]);
+
+  // Rows slide into place when the list reorders or a row leaves, and fade in when added.
+  useFlip(listRef, active.map((t) => t.id).join(','));
+  const completedListRef = useRef<HTMLUListElement>(null);
+  useFlip(completedListRef, completed.map((t) => t.id).join(','));
 
   // Drop selected tasks that left the list (completed on another device, filtered out…).
   useEffect(() => {
@@ -574,7 +580,7 @@ export function Home() {
               </div>
             </div>
             {showCompleted && (
-              <ul className="divide-y divide-line/60">
+              <ul ref={completedListRef} className="divide-y divide-line/60">
                 {completed.map((t) => (
                   <TaskItem key={t.id} task={t} contexts={contexts} onEdit={setEditing} />
                 ))}

@@ -73,6 +73,27 @@ function saveCustomOrders(orders: Record<string, string[]>) {
   localStorage.setItem(CUSTOM_ORDER_KEY, JSON.stringify(orders));
 }
 
+// Chosen (non-custom) sort per (profile, context-selection), so each context
+// reopens with the sort it was last left on.
+const SORT_PREFS_KEY = 'stash.sortPrefs';
+const DEFAULT_SORT: Sort = { field: 'due', dir: 'asc' };
+
+function loadSortPrefs(): Record<string, Sort> {
+  try {
+    return JSON.parse(localStorage.getItem(SORT_PREFS_KEY) ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveSortPrefs(prefs: Record<string, Sort>) {
+  try {
+    localStorage.setItem(SORT_PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // Storage unavailable (private mode / quota) — the sort just won't persist.
+  }
+}
+
 // Per-device preference for what each active task's date badge shows.
 const DATE_DISPLAY_KEY = 'stash.dateDisplay';
 
@@ -148,7 +169,8 @@ export function Home() {
   const [manageOpen, setManageOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [activeSort, setActiveSort] = useState<Sort>({ field: 'due', dir: 'asc' });
+  const [activeSort, setActiveSort] = useState<Sort>(DEFAULT_SORT);
+  const [sortPrefs, setSortPrefs] = useState<Record<string, Sort>>(loadSortPrefs);
   const [completedSort, setCompletedSort] = useState<Sort>({ field: 'date', dir: 'desc' });
   const [customOrders, setCustomOrders] = useState<Record<string, string[]>>(loadCustomOrders);
   const [dateDisplay, setDateDisplay] = useState<DateDisplay>(loadDateDisplay);
@@ -173,14 +195,12 @@ export function Home() {
 
   const contextKey = useMemo(() => getContextKey(activeProfileId, selected), [activeProfileId, selected]);
 
-  // When the context selection changes, auto-apply custom sort if one is saved,
-  // or reset out of custom sort if none exists for the new context.
+  // When the context selection changes (including on launch), restore that
+  // context's sort: its custom order if one is saved, else its last chosen sort,
+  // else the default.
   useEffect(() => {
-    setActiveSort((prev) => {
-      if (customOrders[contextKey]) return { field: 'custom', dir: 'asc' };
-      if (prev.field === 'custom') return { field: 'due', dir: 'asc' };
-      return prev;
-    });
+    if (customOrders[contextKey]) setActiveSort({ field: 'custom', dir: 'asc' });
+    else setActiveSort(sortPrefs[contextKey] ?? DEFAULT_SORT);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contextKey]);
 
@@ -246,6 +266,11 @@ export function Home() {
       delete updated[contextKey];
       setCustomOrders(updated);
       saveCustomOrders(updated);
+    }
+    if (sort.field !== 'custom') {
+      const prefs = { ...sortPrefs, [contextKey]: sort };
+      setSortPrefs(prefs);
+      saveSortPrefs(prefs);
     }
     setActiveSort(sort);
   }

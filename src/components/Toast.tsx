@@ -1,12 +1,13 @@
 import { useStore } from '../lib/useStore';
 import { runUndo, dismissToast } from '../lib/store';
 
-export function Toast() {
+/** `raised` lifts the toast above the multi-select action bar. */
+export function Toast({ raised = false }: { raised?: boolean }) {
   const { toast } = useStore();
   if (!toast) return null;
 
   return (
-    <div className="safe-bottom pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-4">
+    <div className={`safe-bottom pointer-events-none fixed inset-x-0 z-50 flex justify-center px-4 pb-4 ${raised ? 'bottom-20' : 'bottom-0'}`}>
       <div className="pointer-events-auto flex items-center gap-4 rounded-xl border border-line bg-elevated px-4 py-3 shadow-lg">
         <span className="text-sm">{toast.message}</span>
         {/* Error/notice toasts carry no undo action — showing an inert "Undo" would

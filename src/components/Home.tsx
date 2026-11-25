@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Profile, ProfileMember, Task } from '../types';
 import { useStore } from '../lib/useStore';
-import { quickAddTask, clearCompleted, setActiveProfile, acceptInvite, rejectInvite } from '../lib/store';
-import { parseTags } from '../lib/tags';
+import { quickAddTask, clearCompleted, setActiveProfile, acceptInvite, rejectInvite, snoozeTasks, deleteTasks, toggleComplete } from '../lib/store';
+import { SnoozeSheet } from './SnoozeSheet';
+import { SelectionBar } from './SelectionBar';
+import { parseCapture } from '../lib/capture';
 import { pendingInvitesFor } from '../lib/sharing';
 import {
   tasksForProfile,
@@ -176,6 +178,22 @@ export function Home() {
   const [dateDisplay, setDateDisplay] = useState<DateDisplay>(loadDateDisplay);
   const shared = useMemo(readShared, []);
 
+  // Multi-select (long-press a row): null = not selecting.
+  const [selectedIds, setSelectedIds] = useState<string[] | null>(null);
+  // Tasks the snooze sheet is open for (swipe-left on one, or the selection bar).
+  const [snoozing, setSnoozing] = useState<string[] | null>(null);
+  const exitSelection = useCallback(() => setSelectedIds(null), []);
+  function toggleSelected(id: string) {
+    setSelectedIds((cur) => {
+      if (!cur) return [id];
+      const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+      return next.length ? next : null;
+    });
+  }
+
+  // Leaving the profile ends a selection.
+  useEffect(() => setSelectedIds(null), [activeProfileId]);
+
   // Drag state: ref for fresh reads in handlers, state for rendering.
   const dragData = useRef<DragState | null>(null);
   const [drag, _setDrag] = useState<DragState | null>(null);
@@ -231,6 +249,17 @@ export function Home() {
   }, [visible, activeSort, customOrders, contextKey]);
 
   const completed = useMemo(() => sortTasks(visible.filter((t) => t.completed), completedSort), [visible, completedSort]);
+
+  // Drop selected tasks that left the list (completed on another device, filtered out…).
+  useEffect(() => {
+    setSelectedIds((cur) => {
+      if (!cur) return cur;
+      const ids = new Set(active.map((t) => t.id));
+      const next = cur.filter((id) => ids.has(id));
+      if (next.length === cur.length) return cur;
+      return next.length ? next : null;
+    });
+  }, [active]);
 
   // Quick tap: toggle the transient, un-stick a sticky (leaving the transient), or set a new
   // transient. Selecting something new clears the previous transient; removing never does.
@@ -345,18 +374,29 @@ export function Home() {
     addHandled.current = true;
     if (text === null) return;
     window.history.replaceState({}, '', window.location.pathname);
-    const { title, tagIds } = parseTags(text, contexts);
-    if (title) quickAddTask(title, tagIds);
+    const c = parseCapture(text, contexts);
+    if (c.title.trim()) quickAddTask({ title: c.title, contexts: c.tagIds, dueOn: c.dueOn, reminderAt: c.reminderAt, recur: c.recur });
   }, [loaded, contexts]);
 
   // Notification deep-link: `?task=<id>` opens that task's edit sheet once loaded.
   const taskLinkHandled = useRef(false);
   useEffect(() => {
     if (taskLinkHandled.current || !loaded) return;
-    const id = new URLSearchParams(window.location.search).get('task');
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('task');
+    // Notification action buttons arrive as `&do=done|snooze|tomorrow`.
+    const action = params.get('do');
     taskLinkHandled.current = true;
     if (!id) return;
     window.history.replaceState({}, '', window.location.pathname);
+    if (action) {
+      const t = allTasks.find((x) => x.id === id);
+      if (!t || t.completed) return;
+      if (action === 'done') toggleComplete(id);
+      else if (action === 'snooze') snoozeTasks([id], { kind: 'hour' });
+      else if (action === 'tomorrow') snoozeTasks([id], { kind: 'tomorrow' });
+      return;
+    }
     // Search across all profiles: a notification may target a task in one that
     // isn't currently active, so switch to its profile before opening it.
     const t = allTasks.find((x) => x.id === id);
@@ -476,7 +516,7 @@ export function Home() {
         </div>
       )}
 
-      <main className="flex-1">
+      <main className={`flex-1 ${selectedIds ? 'pb-24' : ''}`}>
         {active.length === 0 && completed.length === 0 ? (
           q ? (
             <div className="grid place-items-center px-8 py-24 text-center">
@@ -508,6 +548,11 @@ export function Home() {
                     onPointerUp: endDrag,
                   } : undefined}
                   dateDisplay={dateDisplay}
+                  onSwipeLeft={(task) => setSnoozing([task.id])}
+                  onLongPress={toggleSelected}
+                  selecting={selectedIds !== null}
+                  selected={selectedIds?.includes(t.id) ?? false}
+                  onToggleSelect={toggleSelected}
                 />
               ))}
             </ul>
@@ -559,7 +604,32 @@ export function Home() {
           onClose={() => setExportOpen(false)}
         />
       )}
-      <Toast />
+      {selectedIds && (
+        <SelectionBar
+          ids={selectedIds}
+          tasks={tasks}
+          contexts={contexts}
+          onSnooze={() => setSnoozing(selectedIds)}
+          onDone={exitSelection}
+        />
+      )}
+      {snoozing && (
+        <SnoozeSheet
+          count={snoozing.length}
+          onPick={(target) => {
+            snoozeTasks(snoozing, target);
+            setSnoozing(null);
+            setSelectedIds(null);
+          }}
+          onDelete={() => {
+            deleteTasks(snoozing);
+            setSnoozing(null);
+            setSelectedIds(null);
+          }}
+          onClose={() => setSnoozing(null)}
+        />
+      )}
+      <Toast raised={selectedIds !== null} />
     </div>
   );
 }

@@ -20,11 +20,33 @@ interface Props {
   isDragging?: boolean;
   dragOver?: 'above' | 'below';
   dateDisplay?: DateDisplay;
+  /** Swipe left action. When absent (e.g. completed rows), swiping left deletes. */
+  onSwipeLeft?: (task: Task) => void;
+  /** Long-press enters multi-select. Absent → long-press does nothing. */
+  onLongPress?: (id: string) => void;
+  /** In multi-select mode a tap toggles selection instead of opening the task. */
+  selecting?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }
 
 const SWIPE_THRESHOLD = 80;
+const LONG_PRESS_MS = 450;
 
-export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOver, dateDisplay = 'due' }: Props) {
+export function TaskItem({
+  task,
+  contexts,
+  onEdit,
+  dragGrip,
+  isDragging,
+  dragOver,
+  dateDisplay = 'due',
+  onSwipeLeft,
+  onLongPress,
+  selecting = false,
+  selected = false,
+  onToggleSelect,
+}: Props) {
   const tags = task.contexts
     .map((id) => contexts.find((c) => c.id === id)?.name)
     .filter((n): n is string => Boolean(n));
@@ -69,15 +91,34 @@ export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOve
     wasCompleted.current = task.completed;
   }, [task.completed]);
 
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function cancelPress() {
+    if (pressTimer.current) clearTimeout(pressTimer.current);
+    pressTimer.current = null;
+  }
+  useEffect(() => cancelPress, []);
+
   function onPointerDown(e: React.PointerEvent) {
     start.current = { x: e.clientX, y: e.clientY };
     swiping.current = false;
+    if (onLongPress) {
+      cancelPress();
+      pressTimer.current = setTimeout(() => {
+        pressTimer.current = null;
+        start.current = null; // no swipe after a long-press
+        justSwiped.current = true; // and no click when the finger lifts
+        navigator.vibrate?.(10);
+        onLongPress(task.id);
+      }, LONG_PRESS_MS);
+    }
   }
 
   function onPointerMove(e: React.PointerEvent) {
     if (!start.current) return;
     const deltaX = e.clientX - start.current.x;
     const deltaY = e.clientY - start.current.y;
+    if (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10) cancelPress();
+    if (selecting) return; // no swipe actions while selecting
     if (!swiping.current) {
       if (Math.abs(deltaX) > 10 && Math.abs(deltaX) > Math.abs(deltaY)) {
         swiping.current = true;
@@ -93,10 +134,14 @@ export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOve
   }
 
   function onPointerUp() {
+    cancelPress();
     if (swiping.current) {
       justSwiped.current = true;
       if (dx > SWIPE_THRESHOLD) toggleComplete(task.id);
-      else if (dx < -SWIPE_THRESHOLD) deleteTask(task.id);
+      else if (dx < -SWIPE_THRESHOLD) {
+        if (onSwipeLeft) onSwipeLeft(task);
+        else deleteTask(task.id);
+      }
     }
     start.current = null;
     swiping.current = false;
@@ -108,6 +153,12 @@ export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOve
       e.preventDefault();
       e.stopPropagation();
       justSwiped.current = false;
+      return;
+    }
+    if (selecting) {
+      e.preventDefault();
+      e.stopPropagation();
+      onToggleSelect?.(task.id);
     }
   }
 
@@ -123,27 +174,43 @@ export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOve
       )}
       <div
         className={`pointer-events-none absolute inset-0 flex items-center justify-between px-5 text-white ${
-          dx > 0 ? 'bg-accent' : dx < 0 ? 'bg-red-600' : ''
+          dx > 0 ? 'bg-accent' : dx < 0 ? (onSwipeLeft ? 'bg-sky-600' : 'bg-red-600') : ''
         }`}
       >
         <svg viewBox="0 0 24 24" className={`h-5 w-5 ${dx > 0 ? '' : 'opacity-0'}`} fill="none" stroke="currentColor" strokeWidth="3">
           <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-        <svg viewBox="0 0 24 24" className={`h-5 w-5 ${dx < 0 ? '' : 'opacity-0'}`} fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0v12a1 1 0 001 1h6a1 1 0 001-1V7" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        {onSwipeLeft ? (
+          <span className={`flex items-center gap-1.5 text-sm font-medium ${dx < 0 ? '' : 'opacity-0'}`}>
+            Snooze
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 7v5l3 2M12 22a10 10 0 100-20 10 10 0 000 20z" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+        ) : (
+          <svg viewBox="0 0 24 24" className={`h-5 w-5 ${dx < 0 ? '' : 'opacity-0'}`} fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0v12a1 1 0 001 1h6a1 1 0 001-1V7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
       </div>
 
       <div
-        className="relative flex touch-pan-y select-none items-start gap-3 bg-bg px-4 py-3"
-        style={{ transform: `translateX(${dx}px)`, transition: dx === 0 ? 'transform 150ms ease-out' : 'none' }}
+        className={`relative flex touch-pan-y select-none items-start gap-3 px-4 py-3 transition-colors ${
+          selected ? 'bg-[#2a1d18]' : 'bg-bg'
+        }`}
+        style={{
+          transform: `translateX(${dx}px)`,
+          transition: dx === 0 ? 'transform 150ms ease-out, background-color 150ms' : 'none',
+          WebkitTouchCallout: 'none',
+        }}
+        onContextMenu={onLongPress ? (e) => e.preventDefault() : undefined}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onClickCapture={onClickCapture}
       >
-        {dragGrip && (
+        {dragGrip && !selecting && (
           <div
             className="touch-none shrink-0 cursor-grab self-center text-muted/30 active:cursor-grabbing"
             onPointerDown={(e) => {
@@ -166,6 +233,20 @@ export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOve
           </div>
         )}
 
+        {selecting ? (
+          <span
+            aria-hidden="true"
+            className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md border-2 transition ${
+              selected ? 'border-accent bg-accent text-black' : 'border-muted'
+            }`}
+          >
+            {selected && (
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="3">
+                <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </span>
+        ) : (
         <button
           aria-label={task.completed ? 'Mark incomplete' : 'Mark complete'}
           onClick={() => toggleComplete(task.id)}
@@ -179,8 +260,9 @@ export function TaskItem({ task, contexts, onEdit, dragGrip, isDragging, dragOve
             </svg>
           )}
         </button>
+        )}
 
-        <button onClick={() => onEdit(task)} className="min-w-0 flex-1 text-left">
+        <button onClick={() => onEdit(task)} aria-pressed={selecting ? selected : undefined} className="min-w-0 flex-1 text-left">
           <p className={`flex items-center gap-1.5 break-words ${task.completed ? 'text-muted line-through' : ''}`}>
             <span className="min-w-0">{task.title}</span>
             {task.recur && (

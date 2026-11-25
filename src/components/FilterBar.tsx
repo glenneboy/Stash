@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { haptic } from '../lib/feedback';
 import type { Context } from '../types';
 
 interface Props {
@@ -156,7 +157,7 @@ function Chip({
     start.current = { x: e.clientX, y: e.clientY };
     timer.current = window.setTimeout(() => {
       fired.current = true;
-      navigator.vibrate?.(15);
+      haptic();
       onLong();
     }, LONG_PRESS_MS);
   }

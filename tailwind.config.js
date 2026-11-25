@@ -21,6 +21,10 @@ export default {
           '40%': { transform: 'scale(1.3)' },
           '100%': { transform: 'scale(1)' },
         },
+        draw: {
+          '0%': { strokeDashoffset: '1' },
+          '100%': { strokeDashoffset: '0' },
+        },
         fade: {
           '0%': { opacity: '0' },
           '100%': { opacity: '1' },
@@ -32,6 +36,7 @@ export default {
       },
       animation: {
         pop: 'pop 250ms ease-out',
+        draw: 'draw 220ms ease-out 60ms both',
         fade: 'fade 160ms ease-out',
         rise: 'rise 200ms cubic-bezier(.2,.8,.2,1)',
       },

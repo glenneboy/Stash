@@ -5,6 +5,7 @@ import { hasReminder, isOverdue } from '../lib/reminders';
 import { dueInfo } from '../lib/due';
 import { ageInfo, isWithinLiveTickWindow, type DateDisplay } from '../lib/age';
 import { TaskNote } from './TaskNote';
+import { haptic, prefersReducedMotion } from '../lib/feedback';
 
 interface DragGrip {
   onPointerDown: (e: React.PointerEvent) => void;
@@ -32,6 +33,9 @@ interface Props {
 
 const SWIPE_THRESHOLD = 80;
 const LONG_PRESS_MS = 450;
+/** How long the tick shows in place before the row folds away. */
+const TICK_MS = 320;
+const COLLAPSE_MS = 200;
 
 export function TaskItem({
   task,
@@ -91,6 +95,43 @@ export function TaskItem({
     wasCompleted.current = task.completed;
   }, [task.completed]);
 
+  // Completing an open task: buzz and draw the tick right away, let it sit for a
+  // beat, fold the row shut, then commit — so the row doesn't just vanish.
+  // Un-completing (and reduced motion) commits immediately.
+  const [completing, setCompleting] = useState(false);
+  const rowRef = useRef<HTMLLIElement>(null);
+  const isCompleted = useRef(task.completed);
+  isCompleted.current = task.completed;
+  function complete() {
+    if (completing) return;
+    if (task.completed || prefersReducedMotion()) {
+      toggleComplete(task.id);
+      return;
+    }
+    haptic();
+    setCompleting(true);
+    setPop(true);
+    const commit = () => {
+      // Another device may have completed it meanwhile; don't toggle it back open.
+      if (!isCompleted.current) toggleComplete(task.id, { haptic: false });
+    };
+    setTimeout(() => {
+      const el = rowRef.current;
+      if (!el || typeof el.animate !== 'function') return commit();
+      el.style.overflow = 'hidden';
+      const anim = el.animate(
+        [
+          { height: `${el.offsetHeight}px`, opacity: 1 },
+          { height: '0px', opacity: 0 },
+        ],
+        { duration: COLLAPSE_MS, easing: 'ease-in', fill: 'forwards' },
+      );
+      anim.onfinish = commit;
+      anim.oncancel = commit;
+    }, TICK_MS);
+  }
+  const done = task.completed || completing;
+
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function cancelPress() {
     if (pressTimer.current) clearTimeout(pressTimer.current);
@@ -137,7 +178,7 @@ export function TaskItem({
     cancelPress();
     if (swiping.current) {
       justSwiped.current = true;
-      if (dx > SWIPE_THRESHOLD) toggleComplete(task.id);
+      if (dx > SWIPE_THRESHOLD) complete();
       else if (dx < -SWIPE_THRESHOLD) {
         if (onSwipeLeft) onSwipeLeft(task);
         else deleteTask(task.id);
@@ -164,6 +205,7 @@ export function TaskItem({
 
   return (
     <li
+      ref={rowRef}
       data-task-id={task.id}
       className={`relative overflow-hidden transition-opacity ${isDragging ? 'opacity-30' : ''}`}
     >
@@ -249,21 +291,27 @@ export function TaskItem({
         ) : (
         <button
           aria-label={task.completed ? 'Mark incomplete' : 'Mark complete'}
-          onClick={() => toggleComplete(task.id)}
+          onClick={complete}
           className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 transition ${
-            task.completed ? 'border-accent bg-accent text-black' : 'border-muted'
+            done ? 'border-accent bg-accent text-black' : 'border-muted'
           } ${pop ? 'animate-pop' : ''}`}
         >
-          {task.completed && (
+          {done && (
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="3">
-              <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+              <path
+                d="M5 13l4 4L19 7"
+                pathLength={1}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={completing ? 'animate-draw [stroke-dasharray:1]' : ''}
+              />
             </svg>
           )}
         </button>
         )}
 
         <button onClick={() => onEdit(task)} aria-pressed={selecting ? selected : undefined} className="min-w-0 flex-1 text-left">
-          <p className={`flex items-center gap-1.5 break-words ${task.completed ? 'text-muted line-through' : ''}`}>
+          <p className={`flex items-center gap-1.5 break-words transition-colors duration-200 ${done ? 'text-muted line-through' : ''}`}>
             <span className="min-w-0">{task.title}</span>
             {task.recur && (
               <svg

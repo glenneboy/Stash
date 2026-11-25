@@ -5,6 +5,7 @@ import { planContextMigration, profileName } from './profiles';
 import { isValidEmail, normalizeEmail } from './sharing';
 import { dayLabel, snoozeDay, snoozePatch, type SnoozeTarget } from './snooze';
 import { nextOccurrence } from './recur';
+import { haptic } from './feedback';
 
 // ── Persisted state shape ────────────────────────────────────
 interface Toast {
@@ -734,7 +735,8 @@ export function moveTaskToProfile(id: string, targetProfileId: string | null): v
   });
 }
 
-export function toggleComplete(id: string): void {
+/** `haptic: false` when the caller already buzzed at tap time (the row's tick animation). */
+export function toggleComplete(id: string, opts: { haptic?: boolean } = {}): void {
   const task = state.tasks.find((t) => t.id === id);
   if (!task) return;
   const completed = !task.completed;
@@ -750,7 +752,7 @@ export function toggleComplete(id: string): void {
   enqueue({ kind: 'task.update', id, patch });
   if (!completed) return;
 
-  navigator.vibrate?.(15);
+  if (opts.haptic !== false) haptic();
 
   // Recurring tasks spawn their next occurrence on completion — the ticked-off
   // row stays in Done as a record, and a fresh task appears with the advanced
@@ -815,6 +817,7 @@ export function snoozeTasks(ids: string[], target: SnoozeTarget): void {
   const now = new Date();
   const before = patchMany(ids, (t) => (t.completed ? null : snoozePatch(t, target, now)));
   if (before.size === 0) return;
+  haptic();
   const day = dayLabel(snoozeDay(target, now), now);
   const what = before.size === 1 ? 'Snoozed' : `Snoozed ${plural(before.size)}`;
   showToast(`${what} to ${day}`, () => restorePatches(before));
@@ -835,7 +838,7 @@ export function completeTasks(ids: string[]): void {
     setTasks([...spawned, ...state.tasks].sort((a, b) => b.created_at.localeCompare(a.created_at)));
     spawned.forEach((row) => enqueue({ kind: 'task.insert', row }));
   }
-  navigator.vibrate?.(15);
+  haptic();
   showToast(`Completed ${plural(open.length)}`, () => {
     removeSilently(spawned.map((r) => r.id));
     restorePatches(before);

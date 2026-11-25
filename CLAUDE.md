@@ -15,7 +15,8 @@ Mobile-first PWA task manager. React + TypeScript + Vite, Supabase (email OTP / 
 - `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are injected at build time from repo secrets in `.github/workflows/deploy.yml`. A blank screen on Pages usually means a workflow change dropped them.
 
 ## Facts — don't re-derive these
-- Quick-capture deeplink: `https://glenneboy.github.io/Stash/?add=<text> #Tag` — text becomes the task, trailing `#tag` sets the context. Used by jeebs/Raycast/Shortcuts.
+- Quick-capture deeplink: `https://glenneboy.github.io/Stash/?add=<text> #Tag` — text becomes the task, trailing `#tag` sets the context. Used by jeebs/Raycast/Shortcuts. Capture text (bar, deeplink, pasted lines) goes through `parseCapture` in `src/lib/capture.ts`: dates, clock times (→ reminder) and repeats ("every Monday", "daily") are stripped and applied.
+- Swipe right completes; swipe left opens the snooze sheet (Delete lives there). Long-press a row to multi-select.
 - Installed PWAs (iOS/Android/Mac) never reload on their own, so a new deploy downloads in the background and the app shows a "New version available · Refresh" banner (`UpdateBanner.tsx`). It checks on launch, on return to foreground, and hourly. Without tapping Refresh, the new version loads only once the app is fully closed. No reinstall needed.
 - iOS has no Web Share Target; that's why the `?add=` deeplink exists.
 - The backlog lives in GitHub issues, not a backlog.md.

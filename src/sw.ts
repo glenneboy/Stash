@@ -40,14 +40,28 @@ self.addEventListener('push', (event) => {
       badge: '/Stash/pwa-192.png',
       tag: taskId ? `task-${taskId}` : undefined,
       data: { taskId },
-    }),
+      // Action buttons (Android, desktop Chrome/Edge; iOS ignores them). Not in
+      // TS's NotificationOptions yet, hence the cast.
+      ...(taskId
+        ? {
+            actions: [
+              { action: 'done', title: 'Done' },
+              { action: 'snooze', title: 'Snooze 1h' },
+              { action: 'tomorrow', title: 'Tomorrow' },
+            ],
+          }
+        : {}),
+    } as NotificationOptions),
   );
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const taskId = (event.notification.data as { taskId?: string } | undefined)?.taskId;
-  const url = taskId ? `/Stash/?task=${taskId}` : '/Stash/';
+  // A tapped action button travels to the app as `&do=<action>`; the app applies it
+  // (it holds the signed-in session) instead of opening the task.
+  const action = ['done', 'snooze', 'tomorrow'].includes(event.action) ? event.action : '';
+  const url = taskId ? `/Stash/?task=${taskId}${action ? `&do=${action}` : ''}` : '/Stash/';
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       const existing = clients.find((c) => c.url.includes('/Stash/'));

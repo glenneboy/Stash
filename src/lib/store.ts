@@ -1,9 +1,9 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
-import type { Context, Profile, ProfileMember, Task } from '../types';
+import type { Context, Profile, ProfileMember, Recurrence, Task } from '../types';
 import { planContextMigration, profileName } from './profiles';
 import { isValidEmail, normalizeEmail } from './sharing';
-import { parseNaturalDate } from './dates';
+import { dayLabel, snoozeDay, snoozePatch, type SnoozeTarget } from './snooze';
 import { nextOccurrence } from './recur';
 
 // ── Persisted state shape ────────────────────────────────────
@@ -610,8 +610,14 @@ export function reset(): void {
 }
 
 // ── Public mutations (optimistic) ────────────────────────────
-export function createTask(title: string, contexts: string[], note?: string, dueOn?: string | null): string {
-  const row: Task = {
+export interface NewTaskExtras {
+  reminderAt?: string | null;
+  recur?: Recurrence | null;
+}
+
+function buildTask(title: string, contexts: string[], note?: string, dueOn?: string | null, extra: NewTaskExtras = {}): Task {
+  const reminderAt = extra.reminderAt ?? null;
+  return {
     id: crypto.randomUUID(),
     title: title.trim(),
     note: note?.trim() || null,
@@ -620,22 +626,52 @@ export function createTask(title: string, contexts: string[], note?: string, due
     created_at: new Date().toISOString(),
     completed_at: null,
     due_on: dueOn ?? null,
-    reminder_at: null,
-    notify_next_at: null,
+    reminder_at: reminderAt,
+    notify_next_at: reminderAt,
     notify_stage: 0,
-    recur: null,
+    recur: extra.recur ?? null,
     // New tasks land in the profile currently being viewed (null = Default).
     profile_id: state.activeProfileId,
   };
+}
+
+export function createTask(
+  title: string,
+  contexts: string[],
+  note?: string,
+  dueOn?: string | null,
+  extra?: NewTaskExtras,
+): string {
+  const row = buildTask(title, contexts, note, dueOn, extra);
   setTasks([row, ...state.tasks]);
   enqueue({ kind: 'task.insert', row });
   return row.id;
 }
 
+export interface NewTask extends NewTaskExtras {
+  title: string;
+  contexts: string[];
+  dueOn?: string | null;
+}
+
+// Several tasks at once (a pasted list). They keep the pasted order at the top of
+// the list, and one Undo removes them all.
+export function createTasks(items: NewTask[]): void {
+  if (items.length === 0) return;
+  const base = Date.now();
+  const rows = items.map((it, i) => ({
+    ...buildTask(it.title, it.contexts, undefined, it.dueOn, it),
+    // Newest-first lists show the first pasted line at the top.
+    created_at: new Date(base + (items.length - i)).toISOString(),
+  }));
+  setTasks([...rows, ...state.tasks]);
+  rows.forEach((row) => enqueue({ kind: 'task.insert', row }));
+  showToast(`Added ${rows.length}`, () => removeSilently(rows.map((r) => r.id)));
+}
+
 // Quick-capture entry point (deeplink): create a task and confirm with an undo toast.
-export function quickAddTask(title: string, contexts: string[]): void {
-  const { title: cleaned, dueOn } = parseNaturalDate(title);
-  const id = createTask(cleaned, contexts, undefined, dueOn);
+export function quickAddTask(item: NewTask): void {
+  const id = createTask(item.title, item.contexts, undefined, item.dueOn, item);
   showToast('Added', () => deleteTask(id));
 }
 
@@ -739,6 +775,91 @@ export function toggleComplete(id: string): void {
   }
 
   showToast('Completed', () => toggleComplete(id));
+}
+
+function removeSilently(ids: string[]): void {
+  const set = new Set(ids);
+  setTasks(state.tasks.filter((t) => !set.has(t.id)));
+  ids.forEach((id) => enqueue({ kind: 'task.delete', id }));
+}
+
+// Apply a per-task patch to many tasks, returning what to put back on undo.
+function patchMany(ids: string[], make: (t: Task) => Partial<Task> | null): Map<string, Partial<Task>> {
+  const before = new Map<string, Partial<Task>>();
+  const patches = new Map<string, Partial<Task>>();
+  for (const t of state.tasks) {
+    if (!ids.includes(t.id)) continue;
+    const patch = make(t);
+    if (!patch) continue;
+    patches.set(t.id, patch);
+    const prev: Partial<Task> = {};
+    for (const k of Object.keys(patch) as (keyof Task)[]) (prev as Record<string, unknown>)[k] = t[k];
+    before.set(t.id, prev);
+  }
+  if (patches.size === 0) return before;
+  setTasks(state.tasks.map((t) => (patches.has(t.id) ? { ...t, ...patches.get(t.id) } : t)));
+  patches.forEach((patch, id) => enqueue({ kind: 'task.update', id, patch }));
+  return before;
+}
+
+function restorePatches(before: Map<string, Partial<Task>>): void {
+  patchMany([...before.keys()], (t) => before.get(t.id) ?? null);
+}
+
+function plural(n: number): string {
+  return n === 1 ? '1 task' : `${n} tasks`;
+}
+
+// Snooze one or more tasks to a later day. One Undo puts every date/reminder back.
+export function snoozeTasks(ids: string[], target: SnoozeTarget): void {
+  const now = new Date();
+  const before = patchMany(ids, (t) => (t.completed ? null : snoozePatch(t, target, now)));
+  if (before.size === 0) return;
+  const day = dayLabel(snoozeDay(target, now), now);
+  const what = before.size === 1 ? 'Snoozed' : `Snoozed ${plural(before.size)}`;
+  showToast(`${what} to ${day}`, () => restorePatches(before));
+}
+
+// Complete several tasks. Recurring ones spawn their next occurrence, exactly as
+// a single tick does; Undo removes those and re-opens everything.
+export function completeTasks(ids: string[]): void {
+  const now = new Date();
+  const open = state.tasks.filter((t) => ids.includes(t.id) && !t.completed);
+  if (open.length === 0) return;
+  const before = patchMany(
+    open.map((t) => t.id),
+    () => ({ completed: true, completed_at: now.toISOString(), notify_next_at: null }),
+  );
+  const spawned = open.filter((t) => t.recur).map((t) => nextOccurrence(t, crypto.randomUUID(), now));
+  if (spawned.length > 0) {
+    setTasks([...spawned, ...state.tasks].sort((a, b) => b.created_at.localeCompare(a.created_at)));
+    spawned.forEach((row) => enqueue({ kind: 'task.insert', row }));
+  }
+  navigator.vibrate?.(15);
+  showToast(`Completed ${plural(open.length)}`, () => {
+    removeSilently(spawned.map((r) => r.id));
+    restorePatches(before);
+  });
+}
+
+export function deleteTasks(ids: string[]): void {
+  const gone = state.tasks.filter((t) => ids.includes(t.id));
+  if (gone.length === 0) return;
+  removeSilently(gone.map((t) => t.id));
+  showToast(`Deleted ${plural(gone.length)}`, () => restoreMany(gone));
+}
+
+// Add a tag to every selected task, or remove it if they all have it already.
+export function toggleTagOnTasks(ids: string[], contextId: string): void {
+  const targets = state.tasks.filter((t) => ids.includes(t.id));
+  const remove = targets.length > 0 && targets.every((t) => t.contexts.includes(contextId));
+  const before = patchMany(ids, (t) => {
+    if (remove) return { contexts: t.contexts.filter((c) => c !== contextId) };
+    return t.contexts.includes(contextId) ? null : { contexts: [...t.contexts, contextId] };
+  });
+  if (before.size === 0) return;
+  const name = state.contexts.find((c) => c.id === contextId)?.name ?? 'tag';
+  showToast(`${remove ? 'Removed' : 'Tagged'} ${name}`, () => restorePatches(before));
 }
 
 export function clearCompleted(cleared: Task[]): void {
